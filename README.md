@@ -12,7 +12,7 @@ Free forever under the MIT license.
 
 ## The entire interaction
 
-1. Click the pen in the macOS menu bar.
+1. Press `Control-Option-Command-P` from any app, or click the pen in the macOS menu bar.
 2. Draw one or more freehand strokes around the thing you mean.
 3. Tell your MCP-capable AI “look at the pen” (or ask the actual question).
 4. The AI calls `pen_read`, reasons over the cropped image, then calls
@@ -21,6 +21,10 @@ Free forever under the MIT license.
 
 No screenshot dragging, clipboard, upload account, prompt box, or manual clear.
 Escape remains a human-controlled cancel path.
+
+The installed app carries its own bundled MCP server at
+`Pen.app/Contents/Resources/mcp/index.js`; an AI host does not need this source
+checkout or its `node_modules` directory after installation.
 
 ## Build the MVP
 
@@ -49,6 +53,23 @@ Build first, then point any stdio MCP host at the generated server:
   }
 }
 ```
+
+After installing `Pen.app` in Applications, the stable local configuration is:
+
+```json
+{
+  "mcpServers": {
+    "pen": {
+      "command": "/opt/homebrew/bin/node",
+      "args": ["/Applications/Pen.app/Contents/Resources/mcp/index.js"]
+    }
+  }
+}
+```
+
+The current local build requires Node.js 20 or newer to host that bundled MCP
+file. A future signed distribution can embed its runtime so customers do not
+need Node installed.
 
 The packaged npm command will be `npx -y @kestudios/pen-mcp` after publication.
 The package name was unclaimed when this MVP was created; it has not been

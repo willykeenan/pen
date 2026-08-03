@@ -1,6 +1,6 @@
 {
   "name": "@kestudios/pen-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The local MCP connector for Pen by KE Studios — point at the screen and let your AI get the point.",
   "type": "module",
   "bin": {
@@ -16,9 +16,11 @@
   ],
   "scripts": {
     "build": "npm run build:mcp && npm run build:app",
-    "build:mcp": "tsc -p tsconfig.json && chmod +x dist/mcp/index.js",
+    "build:mcp": "tsc -p tsconfig.json && npm run bundle:mcp && chmod +x dist/mcp/index.js dist/mcp-app/index.js",
+    "bundle:mcp": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/mcp-app/index.js",
     "build:app": "bash scripts/build-app.sh",
     "check": "npm run typecheck && npm test && swift test",
+    "verify:bundle": "node scripts/verify-bundled-mcp.mjs dist/Pen.app/Contents/Resources/mcp/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
     "start:mcp": "node dist/mcp/index.js",
@@ -51,6 +53,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "esbuild": "^0.28.1",
     "tsx": "^4.23.0",
     "typescript": "^5.9.0"
   }

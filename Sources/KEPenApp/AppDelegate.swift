@@ -3,6 +3,7 @@ import AppKit
 @MainActor
 public final class AppDelegate: NSObject, NSApplicationDelegate {
     private let coordinator = OverlayCoordinator()
+    private let globalHotKey = PenGlobalHotKey()
     private var statusItem: NSStatusItem!
 
     public override init() {
@@ -24,10 +25,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         coordinator.onActivityChange = { [weak self] activity in
             self?.render(activity)
         }
+        let hotKeyStatus = globalHotKey.start { [weak self] in
+            self?.coordinator.toggle()
+        }
+        if hotKeyStatus != noErr {
+            button.toolTip = "Pen by KE Studios — click to draw; global shortcut unavailable"
+        }
         render(.idle)
     }
 
     public func applicationWillTerminate(_ notification: Notification) {
+        globalHotKey.stop()
         coordinator.shutdown()
     }
 
@@ -78,7 +86,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
         let toggleTitle = coordinator.activity.isActive ? "Cancel Pen" : "Draw with Pen"
-        menu.addItem(withTitle: toggleTitle, action: #selector(toggleFromMenu(_:)), keyEquivalent: "")
+        let toggleItem = menu.addItem(
+            withTitle: "\(toggleTitle)   \(PenHotKeyDescriptor.toggle.displayName)",
+            action: #selector(toggleFromMenu(_:)),
+            keyEquivalent: ""
+        )
+        toggleItem.toolTip = "Draw over any screen and pass only the marked region to your AI."
         menu.addItem(.separator())
         menu.addItem(withTitle: "Clear Pen History", action: #selector(clearHistory(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Visit kestudios.dev", action: #selector(visitStudio(_:)), keyEquivalent: "")

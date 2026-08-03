@@ -1,9 +1,17 @@
 import AppKit
+import Carbon.HIToolbox
 import CoreGraphics
 import XCTest
 @testable import KEPenCore
 
 final class KEPenAppTests: XCTestCase {
+    func testGlobalShortcutIsDeliberateAndDiscoverable() {
+        let shortcut = PenHotKeyDescriptor.toggle
+        XCTAssertEqual(shortcut.keyCode, UInt32(kVK_ANSI_P))
+        XCTAssertEqual(shortcut.modifiers, UInt32(controlKey | optionKey | cmdKey))
+        XCTAssertEqual(shortcut.displayName, "⌃⌥⌘P")
+    }
+
     func testCropArtifactIncludesInkAndUsesCircledBounds() throws {
         let capture = try makeSolidImage(width: 100, height: 100)
         let strokes = [[
