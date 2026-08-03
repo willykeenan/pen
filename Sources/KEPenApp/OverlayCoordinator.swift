@@ -28,6 +28,7 @@ final class OverlayCoordinator: NSObject, PenCanvasDelegate {
     private var statusTimer: Timer?
     private var sourceAppName: String?
     private var sourceBundleIdentifier: String?
+    private var sourceApplication: NSRunningApplication?
 
     init(store: AnnotationStore = AnnotationStore()) {
         self.store = store
@@ -48,6 +49,7 @@ final class OverlayCoordinator: NSObject, PenCanvasDelegate {
         guard activity == .idle else { return }
 
         let frontmost = NSWorkspace.shared.frontmostApplication
+        sourceApplication = frontmost
         sourceAppName = frontmost?.localizedName
         sourceBundleIdentifier = frontmost?.bundleIdentifier
 
@@ -166,6 +168,8 @@ final class OverlayCoordinator: NSObject, PenCanvasDelegate {
             let record = try store.save(artifact: artifact, source: source)
             activity = .waiting(record.id)
             canvases.forEach { $0.phase = .queued }
+            panels.forEach { $0.allowUnderlyingInteraction() }
+            sourceApplication?.activate(options: [.activateIgnoringOtherApps])
             startStatusTimer(id: record.id)
         } catch {
             showError(title: "Pen could not send this mark", message: error.localizedDescription)
@@ -244,6 +248,7 @@ final class OverlayCoordinator: NSObject, PenCanvasDelegate {
         activeCanvas = nil
         sourceAppName = nil
         sourceBundleIdentifier = nil
+        sourceApplication = nil
         NSCursor.arrow.set()
         activity = .idle
     }
@@ -276,4 +281,3 @@ final class OverlayCoordinator: NSObject, PenCanvasDelegate {
         alert.runModal()
     }
 }
-

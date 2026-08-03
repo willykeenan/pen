@@ -1,6 +1,6 @@
 {
   "name": "@kestudios/pen-mcp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "The local MCP connector for Pen by KE Studios — point at the screen and let your AI get the point.",
   "type": "module",
   "bin": {

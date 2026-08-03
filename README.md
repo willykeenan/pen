@@ -14,6 +14,8 @@ Free forever under the MIT license.
 
 1. Press `Control-Option-Command-P` from any app, or click the pen in the macOS menu bar.
 2. Draw one or more freehand strokes around the thing you mean.
+   When the mark is queued, the overlay becomes click-through and returns focus
+   to the app you were using while keeping the ink visible.
 3. Tell your MCP-capable AI “look at the pen” (or ask the actual question).
 4. The AI calls `pen_read`, reasons over the cropped image, then calls
    `pen_complete` immediately before its reply.

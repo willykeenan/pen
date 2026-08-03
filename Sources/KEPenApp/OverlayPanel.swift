@@ -23,4 +23,9 @@ final class OverlayPanel: NSPanel {
         animationBehavior = .none
         self.contentView = contentView
     }
+
+    func allowUnderlyingInteraction() {
+        ignoresMouseEvents = true
+        resignKey()
+    }
 }

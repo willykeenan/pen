@@ -12,6 +12,17 @@ final class KEPenAppTests: XCTestCase {
         XCTAssertEqual(shortcut.displayName, "⌃⌥⌘P")
     }
 
+    @MainActor
+    func testWaitingOverlayPassesInputBackToUnderlyingApp() throws {
+        let screen = try XCTUnwrap(NSScreen.main)
+        let panel = OverlayPanel(screen: screen, contentView: NSView())
+        defer { panel.close() }
+
+        XCTAssertFalse(panel.ignoresMouseEvents)
+        panel.allowUnderlyingInteraction()
+        XCTAssertTrue(panel.ignoresMouseEvents)
+    }
+
     func testCropArtifactIncludesInkAndUsesCircledBounds() throws {
         let capture = try makeSolidImage(width: 100, height: 100)
         let strokes = [[
