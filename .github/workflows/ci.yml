@@ -83,7 +83,11 @@ jobs:
         run: npm run verify:package -- ${{ matrix.verify }}
       - name: Boot packaged app on Linux
         if: runner.os == 'Linux'
-        run: xvfb-run --auto-servernum npm run verify:package -- linux
+        shell: bash
+        run: |
+          sudo chown root:root dist/release/linux-unpacked/chrome-sandbox
+          sudo chmod 4755 dist/release/linux-unpacked/chrome-sandbox
+          xvfb-run --auto-servernum npm run verify:package -- linux
       - name: Write SHA-256 manifest
         run: npm run checksums
       - name: Record verified installer inventory
