@@ -24,7 +24,7 @@
     "build:app": "bash scripts/build-app.sh",
     "check": "npm run typecheck && npm test && swift test",
     "verify:bundle": "node scripts/verify-bundled-mcp.mjs dist/Pen.app/Contents/Resources/mcp/index.js",
-    "package:preview": "npm run check && npm run build && npm run verify:bundle && bash scripts/package-preview.sh",
+    "package:release": "npm run check && npm run build && npm run verify:bundle && bash scripts/package-release.sh",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
     "start:mcp": "node dist/mcp/index.js",

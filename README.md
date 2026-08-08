@@ -14,12 +14,13 @@ the AI says it has understood it. Then the AI clears and disables the pen.
 Created by **William Keenan at [K&E Studios](https://kestudios.dev/?ref=pen)**.
 Free forever under the MIT license.
 
-[Free Preview and install guide](https://kestudios.dev/pen) ·
+[Download KE Pen free](https://kestudios.dev/pen?ref=github-pen) ·
 [Applied-system card](./SYSTEM_CARD.md)
 
-> **Public Preview boundary:** the first downloadable build is for Apple
-> Silicon on macOS 13+. It is ad-hoc signed, not Developer ID signed or Apple
-> notarized, and its bundled MCP server currently requires Node.js 20+.
+> **Free release boundary:** version 0.2.1 is completely free and open source;
+> there is no paid tier or feature gate. The current Apple Silicon build is
+> ad-hoc signed, not Developer ID signed or Apple-notarized, and its bundled
+> MCP server requires Node.js 20+.
 
 ## The entire interaction
 
@@ -39,11 +40,12 @@ The installed app carries its own bundled MCP server at
 `Pen.app/Contents/Resources/mcp/index.js`; an AI host does not need this source
 checkout or its `node_modules` directory after installation.
 
-## Install the free Preview
+## Install KE Pen
 
-Download the latest DMG from [kestudios.dev/pen](https://kestudios.dev/pen),
+Download the free DMG from
+[kestudios.dev/pen](https://kestudios.dev/pen?ref=github-pen),
 drag `Pen.app` to Applications, then right-click **Open** for the first launch.
-The right-click step is required because the current free Preview is not yet
+The right-click step is required because the current release is not yet
 Apple-notarized. Grant Screen Recording when macOS asks; Pen uses it only to
 create the marked local crop.
 
@@ -118,5 +120,5 @@ tests. The current schema is `dev.kestudios.pen.annotation.v1`.
 
 See [PRIVACY.md](./PRIVACY.md), [SECURITY.md](./SECURITY.md), and
 [NOTICE.md](./NOTICE.md). Maintainers can create the exact public artifact with
-`npm run package:preview`; the DMG and its SHA-256 file are written under
+`npm run package:release`; the DMG and its SHA-256 file are written under
 `dist/`.

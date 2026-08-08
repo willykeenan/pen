@@ -34,7 +34,7 @@ global shortcut, attribution, and the waiting-overlay click-through boundary.
 The public artifact is also checked for exact architecture, bundle metadata,
 embedded MCP discovery, and strict ad-hoc code-signature validity.
 
-These checks establish the local implementation and packaged Preview. They do
+These checks establish the local implementation and packaged release. They do
 not establish outside-user adoption, universal host compatibility, or a
 Developer ID/notarized macOS release.
 
@@ -48,13 +48,14 @@ image reads are capped, and the server uses stdio only.
 
 ## Current limitations
 
-- Apple Silicon only in the first public Preview.
+- Apple Silicon only in the first public release.
 - macOS 13 or newer and Screen Recording permission are required.
 - Node.js 20 or newer is required for the bundled MCP server.
-- The Preview is ad-hoc signed, not Developer ID signed, notarized, or stapled.
+- The release is ad-hoc signed, not Developer ID signed, notarized, or stapled.
 - The host-specific MCP configuration is still manual.
 - No claim of model training, autonomous authority, or production-wide
   compatibility is made.
 
-Created by William Keenan at K&E Studios and released free under the MIT
-license. See [kestudios.dev/pen](https://kestudios.dev/pen).
+Created by William Keenan at K&E Studios. Version 0.2.1 is completely free and
+open source under the MIT license, with no paid tier or feature gate. See
+[kestudios.dev/pen](https://kestudios.dev/pen?ref=github-pen).

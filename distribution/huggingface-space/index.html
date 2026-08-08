@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="KE Pen is a free native macOS visual-intent layer for MCP-capable AI hosts." />
+    <link rel="icon" href="./pen-icon.svg" type="image/svg+xml" />
     <title>KE Pen · Applied system by K&E Studios</title>
     <style>
       :root { color-scheme: dark; --bg:#08080b; --panel:#121217; --ink:#f3efe6; --muted:#a8a4a0; --line:#2a292d; --red:#eb6048; --orange:#f0a05e; }
@@ -42,7 +43,7 @@
       <h1>Point at the bug.<br />Your AI gets the point.</h1>
       <p class="lede">KE Pen lets you draw over any Mac app, shares only the marked crop with your configured AI host, and keeps the ink visible until the AI explicitly says it understood.</p>
       <div class="actions">
-        <a class="button primary" href="https://kestudios.dev/pen">Get the free Preview</a>
+        <a class="button primary" href="https://kestudios.dev/pen?ref=huggingface-pen">Download KE Pen</a>
         <a class="button" href="https://github.com/willykeenan/pen">Inspect the source</a>
       </div>
       <section class="demo" aria-label="Illustration of KE Pen marking a screen region">
@@ -54,8 +55,8 @@
         <article><b>2 · Read without clearing</b><p><code>pen_read</code> returns the crop and bounded metadata. The mark stays visible while the AI reasons.</p></article>
         <article><b>3 · Complete explicitly</b><p><code>pen_complete</code> acknowledges understanding and schedules the fade. Visual context never grants action authority.</p></article>
       </section>
-      <p class="boundary"><strong>Preview boundary.</strong> Apple Silicon, macOS 13+, Screen Recording permission, and Node.js 20+ are required. The current free build is ad-hoc signed and not Apple-notarized. This Space is documentation; screen images stay on the user's Mac unless their configured AI host sends the MCP result to its provider.</p>
-      <footer>Created by William Keenan at <a href="https://kestudios.dev">K&E Studios</a> · MIT licensed</footer>
+      <p class="boundary"><strong>Free release.</strong> KE Pen 0.2.1 is completely free and open source, with no paid tier or feature gate. Apple Silicon, macOS 13+, Screen Recording permission, and Node.js 20+ are required. The current build is ad-hoc signed and not Apple-notarized. This Space is documentation; screen images stay on the user's Mac unless their configured AI host sends the MCP result to its provider.</p>
+      <footer>Created by William Keenan at <a href="https://kestudios.dev/?ref=huggingface-pen">K&E Studios</a> · MIT licensed</footer>
     </main>
   </body>
 </html>
