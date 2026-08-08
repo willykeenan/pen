@@ -8,7 +8,9 @@
   },
   "files": [
     "dist/mcp",
+    "assets/pen-icon.svg",
     "README.md",
+    "SYSTEM_CARD.md",
     "LICENSE",
     "NOTICE.md",
     "PRIVACY.md",
@@ -16,11 +18,13 @@
   ],
   "scripts": {
     "build": "npm run build:mcp && npm run build:app",
+    "build:icon": "bash scripts/build-icon.sh",
     "build:mcp": "tsc -p tsconfig.json && npm run bundle:mcp && chmod +x dist/mcp/index.js dist/mcp-app/index.js",
     "bundle:mcp": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/mcp-app/index.js",
     "build:app": "bash scripts/build-app.sh",
     "check": "npm run typecheck && npm test && swift test",
     "verify:bundle": "node scripts/verify-bundled-mcp.mjs dist/Pen.app/Contents/Resources/mcp/index.js",
+    "package:preview": "npm run check && npm run build && npm run verify:bundle && bash scripts/package-preview.sh",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
     "start:mcp": "node dist/mcp/index.js",
@@ -37,7 +41,7 @@
     "kestudios"
   ],
   "author": "William Keenan <william@kestudios.dev> (https://kestudios.dev)",
-  "homepage": "https://kestudios.dev/?ref=pen",
+  "homepage": "https://kestudios.dev/pen",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/willykeenan/pen.git"

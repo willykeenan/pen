@@ -14,6 +14,8 @@
   <string>Pen</string>
   <key>CFBundleDisplayName</key>
   <string>Pen by KE Studios</string>
+  <key>CFBundleIconFile</key>
+  <string>Pen.icns</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
