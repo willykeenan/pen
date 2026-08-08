@@ -17,7 +17,10 @@ const PNG = Buffer.from(
 );
 
 test("KE_PEN_HOME overrides the platform data path", () => {
-  assert.equal(defaultPenHome({ KE_PEN_HOME: "/tmp/ke-pen-contract" }), "/tmp/ke-pen-contract");
+  assert.equal(
+    defaultPenHome({ KE_PEN_HOME: "/tmp/ke-pen-contract" }, "linux", "/home/tester"),
+    "/tmp/ke-pen-contract",
+  );
 });
 
 test("the default data path follows macOS, Windows, and Linux conventions", () => {
