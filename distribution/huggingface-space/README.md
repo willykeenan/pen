@@ -6,10 +6,12 @@ colorTo: red
 sdk: static
 pinned: false
 license: mit
-short_description: Free and open-source visual intent for AI on macOS.
+short_description: Free visual intent for AI on macOS, Windows, and Linux.
 tags:
   - mcp
   - macos
+  - windows
+  - linux
   - developer-tools
   - applied-ai
 ---
@@ -20,12 +22,13 @@ tags:
 
 Point at the bug. Your AI gets the point.
 
-KE Pen itself is completely free and open source—there is no limited free
-edition or feature gate. This Space documents the applied system and links to
-the Apple Silicon download. KE Pen runs locally on macOS; the Space is not a
-browser clone and does not receive screen images.
+The whole KE Pen is completely free and open source—there is no limited
+edition, paid tier, or feature gate. This Space documents the applied system
+and links to downloads for macOS, Windows, and Linux. KE Pen runs locally on
+your computer; the Space is not a browser clone and does not receive screen
+images.
 
-- [Download KE Pen free](https://kestudios.dev/pen?ref=huggingface-pen)
+- [Download KE Pen for macOS, Windows, or Linux](https://kestudios.dev/pen?ref=huggingface-pen#downloads)
 - [Source and release evidence](https://github.com/willykeenan/pen)
 - [Applied-system card](https://github.com/willykeenan/pen/blob/main/SYSTEM_CARD.md)
 
