@@ -26,6 +26,8 @@ final class OverlayCoordinator: NSObject, PenCanvasDelegate {
     private weak var activeCanvas: PenCanvasView?
     private var finalizeWorkItem: DispatchWorkItem?
     private var statusTimer: Timer?
+    private var permissionWatchTimer: Timer?
+    private var permissionWatchTicks = 0
     private var sourceAppName: String?
     private var sourceBundleIdentifier: String?
     private var sourceApplication: NSRunningApplication?
@@ -255,20 +257,93 @@ final class OverlayCoordinator: NSObject, PenCanvasDelegate {
 
     private func requestScreenCaptureIfNeeded() -> Bool {
         if CGPreflightScreenCaptureAccess() { return true }
+        // First-ever ask for this build shows the system prompt; later calls
+        // return false silently, so fall through to recovery guidance.
         if CGRequestScreenCaptureAccess() { return true }
+        presentScreenCaptureRecovery()
+        return false
+    }
 
+    private func presentScreenCaptureRecovery() {
         let alert = NSAlert()
         alert.alertStyle = .informational
         alert.messageText = "Give Pen Screen Recording access"
-        alert.informativeText = "Pen only captures the region you draw around. macOS requires Screen Recording permission for that local crop."
+        alert.informativeText = """
+        Pen only captures the region you draw around, and macOS requires Screen Recording \
+        permission for that local crop.
+
+        macOS ties the approval to each exact build of Pen. If Pen already shows as enabled in \
+        System Settings › Privacy & Security › Screen Recording, that switch belongs to an older \
+        build — toggle it off and back on (or remove Pen with the − button, then add it again). \
+        “Reset Pen’s Approval” clears the stale entry so macOS asks fresh.
+
+        Pen relaunches itself automatically as soon as access goes live.
+        """
         alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Reset Pen’s Approval")
         alert.addButton(withTitle: "Not now")
         NSApp.activate(ignoringOtherApps: true)
-        if alert.runModal() == .alertFirstButtonReturn,
-           let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-            NSWorkspace.shared.open(url)
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                NSWorkspace.shared.open(url)
+            }
+            watchForScreenCaptureGrant()
+        case .alertSecondButtonReturn:
+            resetScreenCaptureApproval()
+            _ = CGRequestScreenCaptureAccess()
+            watchForScreenCaptureGrant()
+        default:
+            break
         }
-        return false
+    }
+
+    /// Drops this app's own (possibly stale) Screen Recording row from TCC so the
+    /// next request re-prompts cleanly. Removal only — granting stays a manual,
+    /// user-performed step in System Settings.
+    private func resetScreenCaptureApproval() {
+        let bundleID = Bundle.main.bundleIdentifier ?? "dev.kestudios.pen"
+        let reset = Process()
+        reset.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
+        reset.arguments = ["reset", "ScreenCapture", bundleID]
+        try? reset.run()
+        reset.waitUntilExit()
+    }
+
+    /// A grant made while the app is running never applies to the running process,
+    /// so poll for it and relaunch once it lands. Gives up quietly after 5 minutes.
+    private func watchForScreenCaptureGrant() {
+        permissionWatchTimer?.invalidate()
+        permissionWatchTicks = 0
+        permissionWatchTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.pollScreenCaptureGrant()
+            }
+        }
+        if let permissionWatchTimer {
+            RunLoop.main.add(permissionWatchTimer, forMode: .common)
+        }
+    }
+
+    private func pollScreenCaptureGrant() {
+        permissionWatchTicks += 1
+        if CGPreflightScreenCaptureAccess() {
+            permissionWatchTimer?.invalidate()
+            permissionWatchTimer = nil
+            relaunchForFreshPermission()
+        } else if permissionWatchTicks > 150 {
+            permissionWatchTimer?.invalidate()
+            permissionWatchTimer = nil
+        }
+    }
+
+    private func relaunchForFreshPermission() {
+        let bundlePath = Bundle.main.bundlePath
+        let relauncher = Process()
+        relauncher.executableURL = URL(fileURLWithPath: "/bin/sh")
+        relauncher.arguments = ["-c", "sleep 0.7; /usr/bin/open -n \"\(bundlePath)\""]
+        try? relauncher.run()
+        NSApp.terminate(nil)
     }
 
     private func showError(title: String, message: String) {

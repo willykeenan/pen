@@ -9,6 +9,7 @@ import {
   nativeImage,
   screen,
   shell,
+  systemPreferences,
   Tray,
   type Display,
   type IpcMainEvent,
@@ -73,6 +74,7 @@ let activating = false;
 let activeDisplayId: number | null = null;
 let currentAnnotationId: string | null = null;
 let statusTimer: NodeJS.Timeout | null = null;
+let permissionWatchTimer: NodeJS.Timeout | null = null;
 let isPolling = false;
 let isQuitting = false;
 
@@ -97,6 +99,7 @@ if (IS_SMOKE_TEST) {
   app.on("before-quit", () => {
     isQuitting = true;
     stopPolling();
+    stopPermissionWatch();
     closeOverlays();
   });
   app.on("will-quit", () => globalShortcut.unregisterAll());
@@ -216,6 +219,7 @@ async function activatePen(): Promise<void> {
   if (phase !== "idle" || activating) return;
   activating = true;
   try {
+    if (!(await ensureScreenAccess())) return;
     const captures = await captureDisplays();
     if (captures.length === 0) {
       throw new Error(
@@ -247,6 +251,64 @@ async function activatePen(): Promise<void> {
   } finally {
     activating = false;
   }
+}
+
+async function ensureScreenAccess(): Promise<boolean> {
+  if (process.platform !== "darwin") return true;
+  if (systemPreferences.getMediaAccessStatus("screen") === "granted") return true;
+
+  // One throwaway capture attempt makes macOS register KE Pen in the Screen
+  // Recording list (and prompt on newer macOS) before we show guidance.
+  await desktopCapturer
+    .getSources({ types: ["screen"], thumbnailSize: { width: 1, height: 1 } })
+    .catch(() => undefined);
+  if (systemPreferences.getMediaAccessStatus("screen") === "granted") return true;
+
+  const { response } = await dialog.showMessageBox({
+    type: "info",
+    title: "KE Pen",
+    message: "Give KE Pen Screen Recording access",
+    detail:
+      "KE Pen only captures the region you draw around, and macOS requires Screen Recording " +
+      "permission for that local crop.\n\n" +
+      "macOS ties the approval to each exact build of KE Pen. If KE Pen already shows as " +
+      "enabled in System Settings › Privacy & Security › Screen Recording, that switch belongs " +
+      "to an older build — toggle it off and back on (or remove KE Pen with the − button, then " +
+      "add it again).\n\n" +
+      "KE Pen relaunches itself automatically as soon as access goes live.",
+    buttons: ["Open System Settings", "Not now"],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  if (response === 0) {
+    await shell.openExternal(
+      "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+    );
+    watchForScreenGrant();
+  }
+  return false;
+}
+
+// A grant made while the app is running never applies to the running process,
+// so poll for it and relaunch once it lands. Gives up quietly after 5 minutes.
+function watchForScreenGrant(): void {
+  stopPermissionWatch();
+  let ticks = 0;
+  permissionWatchTimer = setInterval(() => {
+    ticks += 1;
+    if (systemPreferences.getMediaAccessStatus("screen") === "granted") {
+      stopPermissionWatch();
+      app.relaunch();
+      app.exit(0);
+    } else if (ticks > 150) {
+      stopPermissionWatch();
+    }
+  }, 2_000);
+}
+
+function stopPermissionWatch(): void {
+  if (permissionWatchTimer) clearInterval(permissionWatchTimer);
+  permissionWatchTimer = null;
 }
 
 async function captureDisplays(): Promise<Array<{ display: Display; image: NativeImage }>> {
