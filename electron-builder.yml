@@ -1,0 +1,62 @@
+appId: dev.kestudios.pen
+productName: KE Pen
+copyright: Copyright © 2026 William Keenan and K&E Studios
+asar: true
+npmRebuild: false
+
+directories:
+  output: dist/release
+  buildResources: assets
+
+files:
+  - dist/desktop/**/*
+
+extraResources:
+  - from: dist/mcp-app/index.js
+    to: mcp/index.js
+  - from: README.md
+    to: README.md
+  - from: LICENSE
+    to: LICENSE
+  - from: PRIVACY.md
+    to: PRIVACY.md
+  - from: SECURITY.md
+    to: SECURITY.md
+
+artifactName: KE-Pen-${version}-${os}-${arch}.${ext}
+
+mac:
+  appId: dev.kestudios.pen
+  category: public.app-category.developer-tools
+  icon: assets/Pen.icns
+  identity: null
+  target:
+    - dmg
+    - zip
+
+dmg:
+  title: KE Pen ${version}
+
+win:
+  icon: assets/pen-icon.png
+  target:
+    - nsis
+    - zip
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+linux:
+  executableName: ke-pen
+  icon: assets/pen-icon.png
+  category: Development
+  synopsis: Free visual pointing layer for MCP-capable AI assistants
+  description: Draw around any screen region and let a local MCP-capable AI inspect the marked crop.
+  target:
+    - AppImage
+    - deb
+    - tar.gz

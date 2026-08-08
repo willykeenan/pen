@@ -1,15 +1,22 @@
-name: CI
+name: Cross-platform CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  test:
-    runs-on: macos-14
+  contract:
+    name: Contract · ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -17,20 +24,79 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
-      - name: Install dependencies
+      - name: Install exact dependencies
         run: npm ci
 
       - name: Audit production dependencies
         run: npm audit --omit=dev
 
-      - name: Run Node and Swift checks
+      - name: Verify shared contracts
         run: npm run check
 
-      - name: Build the app and bundled MCP server
+      - name: Build desktop and MCP bundles
         run: npm run build
 
-      - name: Verify bundled MCP discovery
+      - name: Verify exact MCP discovery surface
         run: npm run verify:bundle
+
+  native-mac-contract:
+    name: Legacy native macOS contract
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test
+
+  package:
+    name: Package · ${{ matrix.label }}
+    needs: [contract]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            label: macOS-universal
+            script: package:mac
+            verify: darwin
+          - os: windows-latest
+            label: Windows-x64
+            script: package:win
+            verify: win32
+          - os: ubuntu-latest
+            label: Linux-x64
+            script: package:linux
+            verify: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build native installers
+        run: npm run ${{ matrix.script }}
+      - name: Boot packaged app on macOS or Windows
+        if: runner.os != 'Linux'
+        run: npm run verify:package -- ${{ matrix.verify }}
+      - name: Boot packaged app on Linux
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum npm run verify:package -- linux
+      - name: Write SHA-256 manifest
+        run: npm run checksums
+      - name: Upload verified installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: ke-pen-0.3.0-${{ matrix.label }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            dist/release/*.dmg
+            dist/release/*.zip
+            dist/release/*.exe
+            dist/release/*.AppImage
+            dist/release/*.deb
+            dist/release/*.tar.gz
+            dist/release/SHA256SUMS-*.txt

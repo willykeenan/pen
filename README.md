@@ -6,100 +6,83 @@
 
 **Point at the bug. Your AI gets the point.**
 
-Pen is a free native macOS overlay for developers. Click the menu-bar pen,
-draw around anything on any screen, and keep working in your AI client. Pen
-crops that exact visual context for MCP and leaves the red ink on screen until
-the AI says it has understood it. Then the AI clears and disables the pen.
+KE Pen is a completely free desktop drawing overlay for macOS, Windows, and
+Linux. Draw around anything on screen, keep working in your MCP-capable AI
+client, and let the AI inspect the exact marked crop. The red ink stays visible
+until the AI explicitly says it understood the mark.
 
 Created by **William Keenan at [K&E Studios](https://kestudios.dev/?ref=pen)**.
-Free forever under the MIT license.
+Free and open source under the MIT license—no paid tier or feature gate.
 
-[Download KE Pen free](https://kestudios.dev/pen?ref=github-pen) ·
+[Get KE Pen free](https://kestudios.dev/pen?ref=github-pen) ·
+[GitHub releases](https://github.com/willykeenan/pen/releases) ·
 [Applied-system card](./SYSTEM_CARD.md)
 
-> **Free release boundary:** version 0.2.1 is completely free and open source;
-> there is no paid tier or feature gate. The current Apple Silicon build is
-> ad-hoc signed, not Developer ID signed or Apple-notarized, and its bundled
-> MCP server requires Node.js 20+.
+## Downloads
+
+| Platform | Free build | Current boundary |
+|---|---|---|
+| macOS | Universal DMG or ZIP | macOS 13+, Intel and Apple Silicon |
+| Windows | x64 installer or ZIP | Windows 10/11, 64-bit |
+| Linux | x64 AppImage, DEB, or tar.gz | X11 or XWayland desktop session |
+
+The first cross-platform release is not code-signed or notarized. macOS may
+require right-click → **Open**, Windows may show SmartScreen, and Linux may
+require `chmod +x` for the AppImage. The source, checksums, and native build
+workflows are public so anyone can inspect or reproduce the artifacts.
 
 ## The entire interaction
 
-1. Press `Control-Option-Command-P` from any app, or click the pen in the macOS menu bar.
-2. Draw one or more freehand strokes around the thing you mean.
-   When the mark is queued, the overlay becomes click-through and returns focus
-   to the app you were using while keeping the ink visible.
-3. Tell your MCP-capable AI “look at the pen” (or ask the actual question).
+1. Press `⌃⌥⌘P` on macOS or `Ctrl+Alt+P` on Windows/Linux, or click the KE Pen tray icon.
+2. Draw one or more red strokes around the thing you mean.
+3. Tell your MCP-capable AI “look at the pen” or ask the actual question.
 4. The AI calls `pen_read`, reasons over the cropped image, then calls
    `pen_complete` immediately before its reply.
 5. The ink fades and input returns to the app underneath it.
 
-No screenshot dragging, clipboard, upload account, prompt box, or manual clear.
-Escape remains a human-controlled cancel path.
+Reading never silently clears the mark. Escape is always a human-controlled
+cancel path while drawing.
 
-The installed app carries its own bundled MCP server at
-`Pen.app/Contents/Resources/mcp/index.js`; an AI host does not need this source
-checkout or its `node_modules` directory after installation.
+## Install the desktop app
 
-## Install KE Pen
+Download the build for your operating system from
+[kestudios.dev/pen](https://kestudios.dev/pen?ref=github-pen) or the
+[GitHub release](https://github.com/willykeenan/pen/releases/latest).
 
-Download the free DMG from
-[kestudios.dev/pen](https://kestudios.dev/pen?ref=github-pen),
-drag `Pen.app` to Applications, then right-click **Open** for the first launch.
-The right-click step is required because the current release is not yet
-Apple-notarized. Grant Screen Recording when macOS asks; Pen uses it only to
-create the marked local crop.
+- macOS: open the DMG and drag **KE Pen** to Applications.
+- Windows: run the x64 installer, or unzip the portable build.
+- Linux: install the DEB, or make the AppImage executable and run it.
 
-Install Node.js 20 or newer, then add the MCP configuration shown below to your
-AI host.
+macOS asks for Screen Recording permission. Linux uses the desktop capture
+portal when required. KE Pen defaults to XWayland inside a Wayland session
+because native Wayland prevents reliable global overlay positioning; advanced
+users can set `KE_PEN_NATIVE_WAYLAND=1`, with compositor-dependent behavior.
 
-## Build from source
+## Connect the MCP server
 
-Requirements: macOS 13+, Xcode Command Line Tools, Node.js 20+.
+KE Pen's app and MCP server share a private local annotation directory. The
+most consistent setup on every operating system is to install the public GitHub
+package after Node.js 20 or newer:
 
 ```bash
-npm install
-npm run build
-open "dist/Pen.app"
+npm install --global github:willykeenan/pen#v0.3.0
 ```
 
-macOS will ask for Screen Recording permission the first time. Pen needs that
-permission only to create the local crop it gives to MCP.
-
-## Connect MCP
-
-Build first, then point any stdio MCP host at the generated server:
+Then configure your AI host:
 
 ```json
 {
   "mcpServers": {
     "pen": {
-      "command": "node",
-      "args": ["/absolute/path/to/pen/dist/mcp/index.js"]
+      "command": "ke-pen-mcp"
     }
   }
 }
 ```
 
-After installing `Pen.app` in Applications, the stable local configuration is:
-
-```json
-{
-  "mcpServers": {
-    "pen": {
-      "command": "/opt/homebrew/bin/node",
-      "args": ["/Applications/Pen.app/Contents/Resources/mcp/index.js"]
-    }
-  }
-}
-```
-
-The current local build requires Node.js 20 or newer to host that bundled MCP
-file. A future signed distribution can embed its runtime so customers do not
-need Node installed.
-
-The packaged npm command will be `npx -y @kestudios/pen-mcp` after publication.
-The package name was unclaimed when this MVP was created; it has not been
-published from this checkout.
+On Windows, use `ke-pen-mcp.cmd` if the host requires the command suffix.
+You can also clone the repository, run `npm ci && npm run build:mcp`, and point
+the host at `dist/mcp/index.js` with Node.js.
 
 ## MCP tools
 
@@ -107,18 +90,48 @@ published from this checkout.
 |---|---|
 | `pen_status` | Reports whether ink is waiting without reading screen content. |
 | `pen_read` | Returns the current cropped PNG plus bounded metadata; ink stays visible. |
-| `pen_complete` | Records understanding and schedules the native overlay to fade just before the AI reply. |
+| `pen_complete` | Records understanding and schedules the overlay to fade just before the AI reply. |
 
-The completion handshake is the product: reading context never silently grants
-permission to clear it.
+The completion handshake is the applied system: visual context informs the AI,
+but it never grants authority to edit, send, spend, deploy, purchase, or take
+another consequential action.
 
-## Local data contract
+## Local data
 
-The app and MCP server coordinate through
-`~/Library/Application Support/KE Pen/`. Set `KE_PEN_HOME` for development or
-tests. The current schema is `dev.kestudios.pen.annotation.v1`.
+KE Pen has no account, telemetry, ads, cloud backend, or listening network port.
+It stores the marked crop and lifecycle record locally:
 
-See [PRIVACY.md](./PRIVACY.md), [SECURITY.md](./SECURITY.md), and
-[NOTICE.md](./NOTICE.md). Maintainers can create the exact public artifact with
-`npm run package:release`; the DMG and its SHA-256 file are written under
-`dist/`.
+| Platform | Default data directory |
+|---|---|
+| macOS | `~/Library/Application Support/KE Pen/` |
+| Windows | `%APPDATA%\KE Pen\` |
+| Linux | `${XDG_DATA_HOME:-~/.local/share}/ke-pen/` |
+
+Set `KE_PEN_HOME` to override the location. The configured AI host may transmit
+the returned crop to its model provider, so that provider's privacy terms still
+apply. See [PRIVACY.md](./PRIVACY.md) and [SECURITY.md](./SECURITY.md).
+
+## Build and verify from source
+
+Requirements: Node.js 20+ and the native packaging tools for your target OS.
+
+```bash
+npm ci
+npm run check
+npm run build
+npm run start:desktop
+```
+
+Create a native installer on its matching operating system:
+
+```bash
+npm run package:mac
+npm run package:win
+npm run package:linux
+```
+
+GitHub Actions runs the shared tests on macOS, Windows, and Linux, then packages
+and boots the native app on each matching runner. Release tags publish the
+verified installers and SHA-256 manifests. The older Swift/AppKit macOS
+prototype remains in `Sources/` as auditable implementation history; the 0.3.0
+release uses the shared Electron runtime in `desktop/`.

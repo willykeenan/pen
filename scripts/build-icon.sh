@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SOURCE="$ROOT/assets/pen-icon.svg"
 OUTPUT="$ROOT/assets/Pen.icns"
+PNG_OUTPUT="$ROOT/assets/pen-icon.png"
 
 ICON_WORK="$(mktemp -d)"
 trap 'rm -rf "$ICON_WORK"' EXIT
@@ -17,6 +18,8 @@ if [[ ! -f "$BASE" ]]; then
   echo "Quick Look did not render the icon source." >&2
   exit 1
 fi
+
+cp "$BASE" "$PNG_OUTPUT"
 
 render_icon() {
   local size="$1"
@@ -36,4 +39,4 @@ render_icon 512 icon_512x512.png
 render_icon 1024 icon_512x512@2x.png
 
 iconutil -c icns "$ICONSET" -o "$OUTPUT"
-echo "Built $OUTPUT"
+echo "Built $OUTPUT and $PNG_OUTPUT"

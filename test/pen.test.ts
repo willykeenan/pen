@@ -20,6 +20,21 @@ test("KE_PEN_HOME overrides the platform data path", () => {
   assert.equal(defaultPenHome({ KE_PEN_HOME: "/tmp/ke-pen-contract" }), "/tmp/ke-pen-contract");
 });
 
+test("the default data path follows macOS, Windows, and Linux conventions", () => {
+  assert.equal(
+    defaultPenHome({}, "darwin", "/Users/tester"),
+    "/Users/tester/Library/Application Support/KE Pen",
+  );
+  assert.equal(
+    defaultPenHome({ APPDATA: "C:\\Users\\tester\\AppData\\Roaming" }, "win32", "C:\\Users\\tester"),
+    "C:\\Users\\tester\\AppData\\Roaming\\KE Pen",
+  );
+  assert.equal(
+    defaultPenHome({ XDG_DATA_HOME: "/home/tester/.data" }, "linux", "/home/tester"),
+    "/home/tester/.data/ke-pen",
+  );
+});
+
 test("pen_read claims the image without clearing it, then pen_complete schedules the fade", async (t) => {
   const fixture = await createFixture("pending");
   t.after(async () => rm(fixture.root, { recursive: true, force: true }));
@@ -145,4 +160,3 @@ async function createFixture(status: AnnotationRecord["status"]) {
 
   return { root, store: new AnnotationStore(root), record };
 }
-

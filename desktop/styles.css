@@ -1,0 +1,90 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+  user-select: none;
+}
+
+body {
+  cursor: crosshair;
+  opacity: 1;
+  transition: opacity 240ms ease-out;
+}
+
+body[data-phase="queued"],
+body[data-phase="reading"],
+body[data-phase="completing"],
+body[data-phase="clearing"] {
+  cursor: default;
+}
+
+body.clearing {
+  opacity: 0;
+}
+
+#ink {
+  position: fixed;
+  inset: 0;
+  display: block;
+  touch-action: none;
+}
+
+#badge {
+  position: fixed;
+  top: 18px;
+  left: 18px;
+  display: grid;
+  grid-template-columns: 8px auto;
+  gap: 5px 9px;
+  min-width: 245px;
+  padding: 11px 15px 12px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 13px;
+  background: rgb(9 9 12 / 92%);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 35%);
+  pointer-events: none;
+}
+
+#badge strong {
+  color: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+}
+
+#badge-detail {
+  grid-column: 2;
+  color: #d5d4d2;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 3px;
+  border-radius: 999px;
+  background: #ff3a2a;
+  box-shadow: 0 0 0 4px rgb(255 58 42 / 13%);
+}
+
+body[data-phase="reading"] .dot {
+  background: #f6a15e;
+}
+
+body[data-phase="completing"] .dot,
+body[data-phase="clearing"] .dot {
+  background: #78aa82;
+}

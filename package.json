@@ -1,8 +1,9 @@
 {
   "name": "@kestudios/pen-mcp",
-  "version": "0.2.1",
-  "description": "The local MCP connector for Pen by KE Studios — point at the screen and let your AI get the point.",
+  "version": "0.3.0",
+  "description": "KE Pen is the free cross-platform visual pointing layer for MCP-capable AI assistants.",
   "type": "module",
+  "main": "dist/desktop/main.cjs",
   "bin": {
     "ke-pen-mcp": "dist/mcp/index.js"
   },
@@ -17,17 +18,27 @@
     "SECURITY.md"
   ],
   "scripts": {
-    "build": "npm run build:mcp && npm run build:app",
+    "build": "npm run build:mcp && npm run build:desktop",
     "build:icon": "bash scripts/build-icon.sh",
-    "build:mcp": "tsc -p tsconfig.json && npm run bundle:mcp && chmod +x dist/mcp/index.js dist/mcp-app/index.js",
+    "build:mcp": "tsc -p tsconfig.json && npm run bundle:mcp && node scripts/mark-executable.mjs dist/mcp/index.js dist/mcp-app/index.js",
     "bundle:mcp": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/mcp-app/index.js",
-    "build:app": "bash scripts/build-app.sh",
-    "check": "npm run typecheck && npm test && swift test",
-    "verify:bundle": "node scripts/verify-bundled-mcp.mjs dist/Pen.app/Contents/Resources/mcp/index.js",
-    "package:release": "npm run check && npm run build && npm run verify:bundle && bash scripts/package-release.sh",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build:desktop": "node scripts/build-desktop.mjs",
+    "build:native:mac": "bash scripts/build-app.sh",
+    "check": "npm run typecheck && npm test",
+    "check:mac": "npm run check && swift test",
+    "verify:bundle": "node scripts/verify-bundled-mcp.mjs dist/mcp-app/index.js",
+    "verify:package": "node scripts/verify-package.mjs",
+    "checksums": "node scripts/write-release-checksums.mjs",
+    "package:mac": "npm run build && electron-builder --mac --universal --publish never",
+    "package:win": "npm run build && electron-builder --win --x64 --publish never",
+    "package:linux": "npm run build && electron-builder --linux --x64 --publish never",
+    "package:native:mac": "npm run check:mac && npm run build:mcp && npm run build:native:mac && node scripts/verify-bundled-mcp.mjs dist/Pen.app/Contents/Resources/mcp/index.js && bash scripts/package-release.sh",
+    "package:release": "npm run package:mac",
+    "start:desktop": "npm run build && electron .",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.desktop.json --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
     "start:mcp": "node dist/mcp/index.js",
+    "prepare": "npm run build:mcp",
     "prepack": "npm run build:mcp"
   },
   "keywords": [
@@ -35,6 +46,9 @@
     "model-context-protocol",
     "pen",
     "macos",
+    "windows",
+    "linux",
+    "electron",
     "screen",
     "annotation",
     "ke-studios",
@@ -57,6 +71,8 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "electron": "43.3.0",
+    "electron-builder": "26.15.3",
     "esbuild": "^0.28.1",
     "tsx": "^4.23.0",
     "typescript": "^5.9.0"

@@ -1,7 +1,7 @@
-import { randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, posix as posixPath, resolve, sep, win32 as winPath } from "node:path";
 import {
   annotationRecordSchema,
   currentPointerSchema,
@@ -19,14 +19,31 @@ export class PenStoreError extends Error {
   }
 }
 
-export function defaultPenHome(environment: NodeJS.ProcessEnv = process.env): string {
+export function defaultPenHome(
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  userHome = homedir(),
+): string {
+  const pathApi = platform === "win32" ? winPath : posixPath;
   const configured = environment.KE_PEN_HOME?.trim();
   if (configured) {
-    return resolve(configured.replace(/^~(?=$|\/)/, homedir()));
+    return pathApi.resolve(configured.replace(/^~(?=$|[\\/])/, userHome));
   }
-  return process.platform === "darwin"
-    ? join(homedir(), "Library", "Application Support", "KE Pen")
-    : join(homedir(), ".ke-pen");
+
+  if (platform === "darwin") {
+    return pathApi.join(userHome, "Library", "Application Support", "KE Pen");
+  }
+  if (platform === "win32") {
+    const roaming = environment.APPDATA?.trim();
+    return roaming
+      ? pathApi.join(pathApi.resolve(roaming), "KE Pen")
+      : pathApi.join(userHome, "AppData", "Roaming", "KE Pen");
+  }
+
+  const xdgDataHome = environment.XDG_DATA_HOME?.trim();
+  return xdgDataHome
+    ? pathApi.join(pathApi.resolve(xdgDataHome), "ke-pen")
+    : pathApi.join(userHome, ".local", "share", "ke-pen");
 }
 
 export class AnnotationStore {
@@ -143,14 +160,78 @@ export class AnnotationStore {
     return record;
   }
 
+  async create(record: AnnotationRecord, image: Buffer): Promise<AnnotationRecord> {
+    const validated = annotationRecordSchema.parse(record);
+    if (validated.status !== "pending") {
+      throw new PenStoreError("A new Pen annotation must begin in pending state.");
+    }
+    if (basename(validated.image.file) !== validated.image.file) {
+      throw new PenStoreError("Pen refused an image path outside its annotation directory.");
+    }
+    if (image.byteLength === 0 || image.byteLength > MAX_IMAGE_BYTES) {
+      throw new PenStoreError("Pen image is empty or exceeds the 16 MB local safety limit.");
+    }
+
+    const digest = createHash("sha256").update(image).digest("hex");
+    if (digest !== validated.image.sha256) {
+      throw new PenStoreError("Pen refused an image whose checksum did not match its annotation.");
+    }
+
+    const directory = this.annotationDirectory(validated.id);
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const imagePath = join(directory, validated.image.file);
+    await this.atomicWrite(imagePath, image);
+    await this.write(validated);
+    await this.atomicWrite(
+      join(this.root, "current.json"),
+      Buffer.from(
+        `${JSON.stringify(
+          { schema: "dev.kestudios.pen.current.v1", id: validated.id },
+          null,
+          2,
+        )}\n`,
+      ),
+    );
+    return validated;
+  }
+
+  async setStatus(
+    id: string,
+    status: AnnotationRecord["status"],
+    cancelReason?: string,
+  ): Promise<AnnotationRecord> {
+    const record = await this.read(id);
+    const updated: AnnotationRecord = {
+      ...record,
+      status,
+      updatedAt: new Date().toISOString(),
+      ...(cancelReason ? { cancelReason } : {}),
+    };
+    await this.write(updated);
+    return updated;
+  }
+
+  async cancelOrphanedCurrent(): Promise<void> {
+    const record = await this.current();
+    if (!record || !["pending", "reading", "completing"].includes(record.status)) return;
+    await this.setStatus(
+      record.id,
+      "cancelled",
+      "Desktop overlay restarted before completion.",
+    );
+  }
+
+  async clearHistory(): Promise<void> {
+    await rm(this.annotationsRoot, { recursive: true, force: true });
+    await rm(join(this.root, "current.json"), { force: true });
+    await mkdir(this.annotationsRoot, { recursive: true, mode: 0o700 });
+  }
+
   async write(record: AnnotationRecord): Promise<void> {
     const validated = annotationRecordSchema.parse(record);
     const path = join(this.annotationDirectory(validated.id), "annotation.json");
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(validated, null, 2)}\n`, { mode: 0o600 });
-    await rename(temporary, path);
-    await chmod(path, 0o600);
+    await this.atomicWrite(path, Buffer.from(`${JSON.stringify(validated, null, 2)}\n`));
   }
 
   private annotationDirectory(id: string): string {
@@ -180,6 +261,16 @@ export class AnnotationStore {
     }
     return readFile(path);
   }
+
+  private async atomicWrite(path: string, data: Buffer): Promise<void> {
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+    await writeFile(temporary, data, { mode: 0o600 });
+    await rename(temporary, path);
+    if (process.platform !== "win32") {
+      await chmod(path, 0o600);
+    }
+  }
 }
 
 function isNotFound(error: unknown): boolean {
@@ -190,4 +281,3 @@ function isNotFound(error: unknown): boolean {
       (error as NodeJS.ErrnoException).code === "ENOENT",
   );
 }
-
