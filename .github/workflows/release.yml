@@ -22,7 +22,7 @@ jobs:
             --verify-tag \
             --draft \
             --title "KE Pen ${GITHUB_REF_NAME#v} — free for macOS, Windows, and Linux" \
-            --generate-notes
+            --notes-file .github/RELEASE_NOTES_v0.3.0.md
 
   build:
     name: Release build · ${{ matrix.label }}

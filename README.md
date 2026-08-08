@@ -14,7 +14,7 @@ until the AI explicitly says it understood the mark.
 Created by **William Keenan at [K&E Studios](https://kestudios.dev/?ref=pen)**.
 Free and open source under the MIT license—no paid tier or feature gate.
 
-[Get KE Pen free](https://kestudios.dev/pen?ref=github-pen) ·
+[Download KE Pen](https://kestudios.dev/pen?ref=github-pen) ·
 [GitHub releases](https://github.com/willykeenan/pen/releases) ·
 [Applied-system card](./SYSTEM_CARD.md)
 

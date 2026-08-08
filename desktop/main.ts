@@ -85,7 +85,8 @@ if (IS_SMOKE_TEST) {
         version: app.getVersion(),
         platform: process.platform,
         arch: process.arch,
-        sandbox: true,
+        sandboxConfigured: true,
+        sandboxActiveForProbe: !process.argv.includes("--no-sandbox"),
       })}\n`,
     );
     app.exit(0);

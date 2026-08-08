@@ -4,6 +4,8 @@ emoji: ✒️
 colorFrom: gray
 colorTo: red
 sdk: static
+app_file: index.html
+fullWidth: true
 pinned: false
 license: mit
 short_description: Free visual intent for AI on macOS, Windows, and Linux.

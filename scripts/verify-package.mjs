@@ -9,7 +9,13 @@ const releaseRoot = path.join(root, "dist", "release");
 
 const executable = await findExecutable(platform);
 await access(executable);
-const result = spawnSync(executable, ["--smoke-test"], {
+// GitHub's unpacked Linux app directory cannot make chrome-sandbox root-owned
+// with mode 4755. Bypass Chromium's process sandbox only for this disposable
+// boot probe; the distributed app still calls app.enableSandbox().
+const smokeArguments = platform === "linux"
+  ? ["--no-sandbox", "--smoke-test"]
+  : ["--smoke-test"];
+const result = spawnSync(executable, smokeArguments, {
   encoding: "utf8",
   timeout: 30_000,
   windowsHide: true,
