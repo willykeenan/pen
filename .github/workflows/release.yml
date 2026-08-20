@@ -102,6 +102,11 @@ jobs:
       - name: Combine checksums and publish the draft
         env:
           GH_TOKEN: ${{ github.token }}
+          # This job deliberately does not check the repo out — it only moves
+          # release assets. Without GH_REPO, gh falls back to asking git which
+          # repo it is in, and dies with "not a git repository", which is how
+          # v0.4.0 built all three platforms and then failed at the last step.
+          GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
           mkdir release
