@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import test from "node:test";
 import {
   defaultSettings,
@@ -28,7 +28,12 @@ import {
   type ShotHistoryEntry,
 } from "../desktop/shot-core.js";
 
-const PICTURES = "/Users/tester/Pictures";
+// Built with the platform's own path rules, not written as POSIX literals: the
+// settings module resolves directories through node:path, so a hard-coded
+// "/Users/…" string only ever matches on macOS and Linux and fails the Windows
+// leg of CI for a separator, not for a defect.
+const PICTURES = resolve(sep === "\\" ? "C:\\Users\\tester\\Pictures" : "/Users/tester/Pictures");
+const SHOTS_DIR = resolve(sep === "\\" ? "C:\\Users\\tester\\Shots" : "/Users/tester/Shots");
 
 test("KE Shot settings default to uploading disabled until a token is configured", () => {
   const settings = defaultSettings(PICTURES, "darwin");
@@ -36,7 +41,7 @@ test("KE Shot settings default to uploading disabled until a token is configured
   assert.equal(settings.shotToken, "");
   assert.equal(settings.copyMode, "image");
   assert.equal(settings.saveLocalCopy, true);
-  assert.equal(settings.localCopyDir, "/Users/tester/Pictures/KE Shot");
+  assert.equal(settings.localCopyDir, join(PICTURES, "KE Shot"));
   assert.equal(settings.shotShortcut, "Command+Shift+2");
   assert.equal(settings.showInDock, true);
   assert.equal(defaultSettings(PICTURES, "win32").shotShortcut, "Control+Shift+2");
@@ -51,7 +56,7 @@ test("settings normalisation keeps good values and refuses hostile ones", () => 
       shotToken: "  shot_live_abc123  ",
       copyMode: "both",
       saveLocalCopy: false,
-      localCopyDir: "/Users/tester/Shots",
+      localCopyDir: SHOTS_DIR,
       shotShortcut: "Control+Alt+9",
       showInDock: false,
       extra: "ignored",
@@ -62,7 +67,7 @@ test("settings normalisation keeps good values and refuses hostile ones", () => 
   assert.equal(normalized.shotToken, "shot_live_abc123");
   assert.equal(normalized.copyMode, "both");
   assert.equal(normalized.saveLocalCopy, false);
-  assert.equal(normalized.localCopyDir, "/Users/tester/Shots");
+  assert.equal(normalized.localCopyDir, SHOTS_DIR);
   assert.equal(normalized.shotShortcut, "Control+Alt+9");
   assert.equal(normalized.showInDock, false);
 
