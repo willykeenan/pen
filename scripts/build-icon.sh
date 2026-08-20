@@ -39,4 +39,17 @@ render_icon 512 icon_512x512.png
 render_icon 1024 icon_512x512@2x.png
 
 iconutil -c icns "$ICONSET" -o "$OUTPUT"
-echo "Built $OUTPUT and $PNG_OUTPUT"
+
+# Menu-bar template glyph: monochrome camera at 18pt + @2x. The "Template"
+# filename suffix is what makes Electron treat it as a macOS template image.
+TRAY_SOURCE="$ROOT/assets/tray-icon.svg"
+qlmanage -t -s 1024 -o "$PREVIEW" "$TRAY_SOURCE" >/dev/null
+TRAY_BASE="$PREVIEW/$(basename "$TRAY_SOURCE").png"
+if [[ ! -f "$TRAY_BASE" ]]; then
+  echo "Quick Look did not render the tray icon source." >&2
+  exit 1
+fi
+sips -z 18 18 "$TRAY_BASE" --out "$ROOT/assets/trayTemplate.png" >/dev/null
+sips -z 36 36 "$TRAY_BASE" --out "$ROOT/assets/trayTemplate@2x.png" >/dev/null
+
+echo "Built $OUTPUT, $PNG_OUTPUT, and the tray template glyphs"

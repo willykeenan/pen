@@ -682,12 +682,17 @@ function setPhase(nextPhase: PenPhase): void {
 }
 
 function createTray(): void {
-  const iconPath = path.join(__dirname, "assets", "pen-icon.png");
-  const base = nativeImage.createFromPath(iconPath);
-  const icon = base.resize({
-    width: process.platform === "darwin" ? 18 : 24,
-    height: process.platform === "darwin" ? 18 : 24,
-  });
+  // macOS gets a purpose-built template glyph: the "Template" filename suffix
+  // makes Electron mark it as a template image (the system recolors it for
+  // light and dark menu bars) and pick up the @2x file for retina. Downscaling
+  // the full-color Dock art to 18px — the old approach — rendered as a muddy
+  // dark square.
+  const icon =
+    process.platform === "darwin"
+      ? nativeImage.createFromPath(path.join(__dirname, "assets", "trayTemplate.png"))
+      : nativeImage
+          .createFromPath(path.join(__dirname, "assets", "pen-icon.png"))
+          .resize({ width: 24, height: 24 });
   tray = new Tray(icon);
   tray.setToolTip("KE Pen by K&E Studios — click to draw");
   tray.on("click", () => void togglePen());

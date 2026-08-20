@@ -48,6 +48,8 @@ await Promise.all([
   cp(path.join(root, "desktop", "index.html"), path.join(output, "ui", "index.html")),
   cp(path.join(root, "desktop", "styles.css"), path.join(output, "ui", "styles.css")),
   cp(path.join(root, "assets", "pen-icon.png"), path.join(output, "assets", "pen-icon.png")),
+  cp(path.join(root, "assets", "trayTemplate.png"), path.join(output, "assets", "trayTemplate.png")),
+  cp(path.join(root, "assets", "trayTemplate@2x.png"), path.join(output, "assets", "trayTemplate@2x.png")),
 ]);
 
 process.stdout.write(`Built cross-platform desktop runtime at ${output}\n`);
