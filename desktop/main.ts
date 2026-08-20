@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   desktopCapturer,
   dialog,
   globalShortcut,
@@ -21,8 +22,19 @@ import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { AnnotationStore } from "../src/store.js";
 import type { AnnotationRecord } from "../src/types.js";
+import { cancelActiveRegionCapture, captureRegion } from "./capture.js";
+import { SettingsStore, ShotHistoryStore, type ShotSettings } from "./settings.js";
+import { createShotRuntime, type ShotRuntime } from "./shot.js";
+import {
+  computeRegionCropPixels,
+  formatAccelerator,
+  type CopyMode,
+  type ShotHistoryEntry,
+} from "./shot-core.js";
 
 type PenPhase = "idle" | "drawing" | "queued" | "reading" | "completing" | "clearing";
+
+type OverlayMode = "pen" | "shot";
 
 interface OverlayContext {
   capture: NativeImage;
@@ -49,6 +61,11 @@ const IS_SMOKE_TEST = process.argv.includes("--smoke-test");
 const ACTIVATE_ON_START = process.argv.includes("--activate-on-start");
 const SHORTCUT = process.platform === "darwin" ? "Control+Alt+Command+P" : "Control+Alt+P";
 const SHORTCUT_LABEL = process.platform === "darwin" ? "⌃⌥⌘P" : "Ctrl+Alt+P";
+const COPY_MODE_LABELS: Record<CopyMode, string> = {
+  image: "Image",
+  link: "Link",
+  both: "Both",
+};
 
 app.setName("KE Pen");
 if (process.platform === "linux") {
@@ -77,6 +94,11 @@ let statusTimer: NodeJS.Timeout | null = null;
 let permissionWatchTimer: NodeJS.Timeout | null = null;
 let isPolling = false;
 let isQuitting = false;
+let overlayMode: OverlayMode = "pen";
+let pendingShotRegion: ((region: Buffer | null) => void) | null = null;
+let shot: ShotRuntime | null = null;
+let shotShortcutLabel = "";
+let dockCaptureArmed = false;
 
 if (IS_SMOKE_TEST) {
   void app.whenReady().then(() => {
@@ -96,35 +118,143 @@ if (IS_SMOKE_TEST) {
   registerIpc();
   app.on("second-instance", () => void togglePen());
   app.on("window-all-closed", () => undefined);
+  // On macOS the Dock icon is the KE Shot button. macOS also fires this while
+  // the app is still coming up, so the arming delay keeps launch from shooting.
+  app.on("activate", () => {
+    if (!dockCaptureArmed) return;
+    void runShot();
+  });
   app.on("before-quit", () => {
     isQuitting = true;
     stopPolling();
     stopPermissionWatch();
+    // An orphaned crosshair would own the screen after the app is gone.
+    cancelActiveRegionCapture();
+    finishShotOverlay(null);
     closeOverlays();
   });
   app.on("will-quit", () => globalShortcut.unregisterAll());
 
   void app.whenReady().then(async () => {
+    // Hidden until the real preference is known: reading settings takes two
+    // file reads, and the icon must not flash for anyone who turned it off.
     if (process.platform === "darwin") app.dock?.hide();
     await store.cancelOrphanedCurrent();
+    // KE Shot is additive: if its local state cannot be prepared, KE Pen still
+    // has to come up exactly as it did before.
+    await createShot().catch(() => undefined);
+    applyDockVisibility();
     createTray();
-    const shortcutRegistered = globalShortcut.register(SHORTCUT, () => void togglePen());
-    if (!shortcutRegistered) {
-      tray?.setToolTip("KE Pen — global shortcut unavailable; click the tray icon to draw");
-    }
+    const penRegistered = globalShortcut.register(SHORTCUT, () => void togglePen());
+    const shotRegistered = registerShotShortcut();
+    applyTrayTooltip(penRegistered, shotRegistered);
+    setTimeout(() => {
+      dockCaptureArmed = true;
+    }, 1_500);
     if (ACTIVATE_ON_START) await activatePen();
   });
+}
+
+async function createShot(): Promise<void> {
+  const options = {
+    directory: app.getPath("userData"),
+    picturesDirectory: picturesDirectory(),
+  };
+  const settings = new SettingsStore(options);
+  const history = new ShotHistoryStore(options);
+  await settings.load();
+  await history.load();
+  shotShortcutLabel = formatAccelerator(settings.current.shotShortcut);
+  shot = createShotRuntime({
+    settings,
+    history,
+    captureRegion: () =>
+      captureRegion({
+        ensureAccess: ensureScreenAccess,
+        captureWithOverlay: captureShotRegionWithOverlay,
+      }),
+    onChange: () => updateTrayMenu(),
+  });
+}
+
+function picturesDirectory(): string {
+  try {
+    return app.getPath("pictures");
+  } catch {
+    return path.join(app.getPath("home"), "Pictures");
+  }
+}
+
+function registerShotShortcut(): boolean {
+  const accelerator = shot?.settings.current.shotShortcut ?? "";
+  if (accelerator.length === 0) return false;
+  try {
+    return globalShortcut.register(accelerator, () => void runShot());
+  } catch {
+    return false;
+  }
+}
+
+async function runShot(): Promise<void> {
+  if (!shot || phase !== "idle" || activating) return;
+  await shot.run();
+}
+
+async function updateShotSettings(patch: Partial<ShotSettings>): Promise<void> {
+  if (!shot) return;
+  const next = await shot.settings.update(patch);
+  if (patch.showInDock !== undefined) applyDockVisibility(next.showInDock);
+  updateTrayMenu();
+}
+
+// A settings write can fail on a full or read-only disk. Electron has already
+// flipped the menu item by then, so a silent rejection would leave the tray
+// claiming a state neither the app nor the file actually holds.
+function applyShotSetting(patch: Partial<ShotSettings>): void {
+  void updateShotSettings(patch).catch((error: unknown) => {
+    updateTrayMenu();
+    void dialog.showMessageBox({
+      type: "error",
+      title: "KE Shot could not save that setting",
+      message:
+        error instanceof Error ? error.message : "KE Shot could not write its settings file.",
+      detail: `The previous setting is still in effect.\n\n${shot?.settings.file ?? ""}`,
+    });
+  });
+}
+
+function applyDockVisibility(showInDock = shot?.settings.current.showInDock ?? false): void {
+  if (process.platform !== "darwin") return;
+  if (showInDock) void app.dock?.show();
+  else app.dock?.hide();
+}
+
+function applyTrayTooltip(penRegistered: boolean, shotRegistered: boolean): void {
+  if (!tray) return;
+  const unavailable = [
+    ...(penRegistered ? [] : ["Pen"]),
+    ...(shotRegistered ? [] : ["Shot"]),
+  ];
+  tray.setToolTip(
+    unavailable.length === 0
+      ? "KE Shot and KE Pen by K&E Studios — click for the menu"
+      : `KE Pen — global shortcut unavailable for KE ${unavailable.join(" and KE ")}; use this menu`,
+  );
 }
 
 function registerIpc(): void {
   ipcMain.handle("pen:bootstrap", (event) => {
     const context = contextFor(event);
+    const isShot = overlayMode === "shot";
     return {
+      mode: overlayMode,
       displayId: context.display.id,
       screenWidth: context.display.bounds.width,
       screenHeight: context.display.bounds.height,
-      baselineDataUrl: context.capture.toDataURL(),
-      shortcut: SHORTCUT_LABEL,
+      // KE Shot crops in the main process, so the overlay never pays for a
+      // full-screen data URL it would only throw away.
+      baselineDataUrl: isShot ? "" : context.capture.toDataURL(),
+      shortcut: isShot ? shotShortcutLabel : SHORTCUT_LABEL,
     };
   });
 
@@ -147,9 +277,32 @@ function registerIpc(): void {
     return false;
   });
 
+  ipcMain.handle("pen:submit-shot-region", (event, input: unknown) => {
+    const context = contextFor(event);
+    if (overlayMode !== "shot" || phase !== "drawing" || !pendingShotRegion) {
+      throw new Error("KE Shot is not accepting a region right now.");
+    }
+    if (activeDisplayId !== null && activeDisplayId !== context.display.id) {
+      throw new Error("KE Shot is not accepting a region from this display.");
+    }
+    const rect = validateRect((input as { rect?: unknown } | null)?.rect, "shot region");
+    const size = context.capture.getSize();
+    const pixels = computeRegionCropPixels({
+      rect,
+      displayWidth: context.display.bounds.width,
+      displayHeight: context.display.bounds.height,
+      imageWidth: size.width,
+      imageHeight: size.height,
+    });
+    const png = context.capture.crop(pixels).toPNG();
+    // Tear the overlay down after this reply so the sender is still alive.
+    setImmediate(() => finishShotOverlay(png.byteLength > 0 ? png : null));
+    return { ok: true };
+  });
+
   ipcMain.handle("pen:submit-annotation", async (event, input: unknown) => {
     const context = contextFor(event);
-    if (phase !== "drawing" || activeDisplayId !== context.display.id) {
+    if (overlayMode !== "pen" || phase !== "drawing" || activeDisplayId !== context.display.id) {
       throw new Error("Pen is not accepting a mark from this display.");
     }
     const payload = validatePayload(input, context);
@@ -215,8 +368,16 @@ async function togglePen(): Promise<void> {
   await activatePen();
 }
 
+// A macOS region capture runs entirely outside the phase machine, so "idle" is
+// not enough on its own: opening the Pen overlay on top of a live crosshair
+// would capture KE Pen's own dim layer and badge, and leave the overlay unable
+// to receive input because screencapture owns the event tap.
+function shotOwnsTheScreen(): boolean {
+  return overlayMode !== "shot" && (shot?.busy() ?? false);
+}
+
 async function activatePen(): Promise<void> {
-  if (phase !== "idle" || activating) return;
+  if (phase !== "idle" || activating || shotOwnsTheScreen()) return;
   activating = true;
   try {
     if (!(await ensureScreenAccess())) return;
@@ -251,6 +412,57 @@ async function activatePen(): Promise<void> {
   } finally {
     activating = false;
   }
+}
+
+// Windows and Linux have no system region picker, so KE Shot reuses the Pen
+// overlay windows in a rubber-band mode. macOS never reaches this path.
+async function captureShotRegionWithOverlay(): Promise<Buffer | null> {
+  if (phase !== "idle" || activating) return null;
+  activating = true;
+  try {
+    const captures = await captureDisplays();
+    if (captures.length === 0) {
+      throw new Error(
+        "KE Shot could not capture a display. Grant screen-capture permission and try again.",
+      );
+    }
+
+    overlayMode = "shot";
+    activeDisplayId = null;
+    currentAnnotationId = null;
+    setPhase("drawing");
+    for (const capture of captures) {
+      await createOverlay(capture.display, capture.image);
+    }
+    for (const context of overlays.values()) {
+      context.window.showInactive();
+    }
+    const cursorDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+    const focusWindow = [...overlays.values()].find(
+      (context) => context.display.id === cursorDisplay.id,
+    )?.window;
+    focusWindow?.show();
+    focusWindow?.focus();
+    return await new Promise<Buffer | null>((resolve) => {
+      pendingShotRegion = resolve;
+    });
+  } catch (error) {
+    finishShotOverlay(null);
+    throw error;
+  } finally {
+    activating = false;
+  }
+}
+
+function finishShotOverlay(region: Buffer | null): void {
+  const resolve = pendingShotRegion;
+  pendingShotRegion = null;
+  if (overlayMode !== "shot" && !resolve) return;
+  closeOverlays();
+  activeDisplayId = null;
+  overlayMode = "pen";
+  setPhase("idle");
+  resolve?.(region);
 }
 
 async function ensureScreenAccess(): Promise<boolean> {
@@ -421,6 +633,10 @@ async function pollStatus(): Promise<void> {
 }
 
 async function cancelPen(reason: string): Promise<void> {
+  if (overlayMode === "shot") {
+    finishShotOverlay(null);
+    return;
+  }
   stopPolling();
   if (currentAnnotationId) {
     try {
@@ -455,11 +671,14 @@ function closeOverlays(): void {
 }
 
 function setPhase(nextPhase: PenPhase): void {
+  const changed = nextPhase !== phase;
   phase = nextPhase;
   for (const context of overlays.values()) {
     if (!context.window.isDestroyed()) context.window.webContents.send("pen:phase", nextPhase);
   }
-  updateTrayMenu();
+  // The status poll calls this five times a second with the same phase, and
+  // rebuilding the tray menu that often can dismiss it while it is open.
+  if (changed) updateTrayMenu();
 }
 
 function createTray(): void {
@@ -477,9 +696,148 @@ function createTray(): void {
 
 function updateTrayMenu(): void {
   if (!tray) return;
+  tray.setContextMenu(Menu.buildFromTemplate([...shotMenuSection(), ...penMenuSection()]));
+}
+
+function shotMenuSection(): MenuItemConstructorOptions[] {
+  if (!shot) return [];
+  const runtime = shot;
+  const settings = runtime.settings.current;
+  const history = runtime.history.entries;
+  const latest = history.find((entry) => entry.url !== null);
+  const pending = runtime.pendingCount();
+  const recent: MenuItemConstructorOptions[] = history.slice(0, 10).map((entry) => ({
+    label: shotEntryLabel(entry),
+    submenu: [
+      {
+        label: "Copy link",
+        enabled: entry.url !== null,
+        click: () => {
+          if (entry.url) clipboard.writeText(entry.url);
+        },
+      },
+      {
+        label: "Open in browser",
+        enabled: entry.url !== null,
+        click: () => {
+          if (entry.url) void shell.openExternal(entry.url);
+        },
+      },
+      {
+        label: "Show local copy",
+        enabled: entry.localPath !== null,
+        click: () => {
+          if (entry.localPath) shell.showItemInFolder(entry.localPath);
+        },
+      },
+      {
+        label: "Delete from endpoint…",
+        enabled: entry.id !== null && !runtime.busy(),
+        click: () => confirmDeleteShot(entry),
+      },
+    ],
+  }));
+  if (recent.length === 0) recent.push({ label: "No shots yet", enabled: false });
+  if (pending > 0) {
+    recent.push(
+      { type: "separator" },
+      {
+        label: `Retry failed uploads (${pending})`,
+        click: () => void runtime.retryPending(),
+      },
+    );
+  }
+
+  const copyModes: MenuItemConstructorOptions[] = (["image", "link", "both"] as CopyMode[]).map(
+    (mode) => ({
+      label: COPY_MODE_LABELS[mode],
+      type: "radio",
+      checked: settings.copyMode === mode,
+      click: () => applyShotSetting({ copyMode: mode }),
+    }),
+  );
+
+  const dockItem: MenuItemConstructorOptions[] =
+    process.platform === "darwin"
+      ? [
+          {
+            label: "Show in Dock",
+            type: "checkbox",
+            checked: settings.showInDock,
+            click: () => applyShotSetting({ showInDock: !settings.showInDock }),
+          },
+        ]
+      : [];
+
+  return [
+    { label: "KE Shot", enabled: false },
+    {
+      label: `Capture region   ${shotShortcutLabel}`.trimEnd(),
+      enabled: !runtime.busy() && phase === "idle",
+      click: () => void runShot(),
+    },
+    {
+      label: "Copy last link",
+      enabled: latest !== undefined,
+      click: () => {
+        if (latest?.url) clipboard.writeText(latest.url);
+      },
+    },
+    {
+      label: "Open last shot",
+      enabled: latest !== undefined,
+      click: () => {
+        if (latest?.url) void shell.openExternal(latest.url);
+      },
+    },
+    { label: "Recent shots", submenu: recent },
+    { type: "separator" },
+    { label: "Copy to clipboard", submenu: copyModes },
+    {
+      label: "Save a local copy",
+      type: "checkbox",
+      checked: settings.saveLocalCopy,
+      click: () => applyShotSetting({ saveLocalCopy: !settings.saveLocalCopy }),
+    },
+    ...dockItem,
+    { label: "Open settings file…", click: () => void shell.openPath(runtime.settings.file) },
+    { type: "separator" },
+  ];
+}
+
+function confirmDeleteShot(entry: ShotHistoryEntry): void {
+  void (async () => {
+    const runtime = shot;
+    if (!runtime) return;
+    const { response } = await dialog.showMessageBox({
+      type: "warning",
+      title: "KE Shot",
+      message: "Delete this shot from your endpoint?",
+      detail:
+        "Your endpoint stops serving it. This cannot recall bytes a chat app, an unfurl " +
+        "service, or a CDN already fetched. Any local copy stays on this machine.",
+      buttons: ["Delete", "Cancel"],
+      defaultId: 1,
+      cancelId: 1,
+    });
+    if (response !== 0) return;
+    await runtime.deleteShot(entry.key);
+  })();
+}
+
+function shotEntryLabel(entry: ShotHistoryEntry): string {
+  const stamp = entry.createdAt.length > 0 ? entry.createdAt.replace("T", " ").slice(0, 19) : "shot";
+  if (entry.status === "uploaded") return `${stamp}   copy link`;
+  if (entry.status === "pending") return `${stamp}   upload failed`;
+  return `${stamp}   local only`;
+}
+
+function penMenuSection(): MenuItemConstructorOptions[] {
   const template: MenuItemConstructorOptions[] = [
+    { label: "KE Pen", enabled: false },
     {
       label: phase === "idle" ? `Draw with KE Pen   ${SHORTCUT_LABEL}` : "Cancel KE Pen",
+      enabled: phase !== "idle" || !shotOwnsTheScreen(),
       click: () => void togglePen(),
     },
     { type: "separator" },
@@ -514,7 +872,7 @@ function updateTrayMenu(): void {
     { type: "separator" },
     { label: "Quit KE Pen", click: () => app.quit() },
   ];
-  tray.setContextMenu(Menu.buildFromTemplate(template));
+  return template;
 }
 
 function contextFor(event: IpcMainInvokeEvent | IpcMainEvent): OverlayContext {

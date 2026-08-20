@@ -1,6 +1,7 @@
-import { computeCropGeometry, type PenPoint } from "./crop-geometry.js";
+import { computeCropGeometry, type PenPoint, type PenRect } from "./crop-geometry.js";
 
 interface Bootstrap {
+  mode: "pen" | "shot";
   displayId: number;
   screenWidth: number;
   screenHeight: number;
@@ -13,6 +14,7 @@ interface PenBridge {
   beginStroke(): boolean;
   releaseDisplay(): Promise<boolean>;
   submitAnnotation(payload: unknown): Promise<{ id: string }>;
+  submitShotRegion(payload: unknown): Promise<{ ok: boolean }>;
   cancel(): void;
   onPhase(callback: (phase: string) => void): void;
 }
@@ -24,6 +26,7 @@ declare global {
 }
 
 const canvas = requiredElement<HTMLCanvasElement>("ink");
+const badgeTitle = requiredElement<HTMLElement>("badge-title");
 const badgeDetail = requiredElement<HTMLElement>("badge-detail");
 const context = requiredCanvasContext(canvas);
 
@@ -35,6 +38,9 @@ let currentStroke: PenPoint[] | null = null;
 let activePointerId: number | null = null;
 let finalizeTimer: number | undefined;
 let startedAt = performance.now();
+let regionOrigin: { x: number; y: number } | null = null;
+let regionPoint: { x: number; y: number } | null = null;
+let regionSubmitted = false;
 
 window.kePen.onPhase((nextPhase) => {
   phase = nextPhase;
@@ -48,6 +54,10 @@ void initialize();
 
 async function initialize(): Promise<void> {
   bootstrap = await window.kePen.bootstrap();
+  if (bootstrap.mode === "shot") {
+    initializeShot();
+    return;
+  }
   baseline = await loadImage(bootstrap.baselineDataUrl);
   resizeCanvas();
   renderBadge();
@@ -57,6 +67,85 @@ async function initialize(): Promise<void> {
   canvas.addEventListener("pointerup", handlePointerUp);
   canvas.addEventListener("pointercancel", handlePointerCancel);
   window.addEventListener("keydown", handleKeyDown);
+}
+
+function initializeShot(): void {
+  badgeTitle.textContent = "SHOT · K&E STUDIOS";
+  resizeCanvas();
+  renderBadge();
+  window.addEventListener("resize", resizeCanvas);
+  canvas.addEventListener("pointerdown", handleRegionPointerDown);
+  canvas.addEventListener("pointermove", handleRegionPointerMove);
+  canvas.addEventListener("pointerup", handleRegionPointerUp);
+  canvas.addEventListener("pointercancel", handleRegionPointerCancel);
+  window.addEventListener("keydown", handleKeyDown);
+}
+
+function handleRegionPointerDown(event: PointerEvent): void {
+  if (regionSubmitted || regionOrigin) return;
+  if (!window.kePen.beginStroke()) return;
+  activePointerId = event.pointerId;
+  regionOrigin = { x: event.clientX, y: event.clientY };
+  regionPoint = { x: event.clientX, y: event.clientY };
+  canvas.setPointerCapture(event.pointerId);
+  draw();
+  renderBadge();
+}
+
+function handleRegionPointerMove(event: PointerEvent): void {
+  if (event.pointerId !== activePointerId || !regionOrigin) return;
+  regionPoint = { x: event.clientX, y: event.clientY };
+  draw();
+  renderBadge();
+}
+
+function handleRegionPointerUp(event: PointerEvent): void {
+  if (event.pointerId !== activePointerId || !regionOrigin) return;
+  regionPoint = { x: event.clientX, y: event.clientY };
+  const rect = currentRegion();
+  activePointerId = null;
+  if (!rect || rect.width < 2 || rect.height < 2) {
+    window.kePen.cancel();
+    return;
+  }
+  regionSubmitted = true;
+  void submitRegion(rect);
+}
+
+function handleRegionPointerCancel(event: PointerEvent): void {
+  if (event.pointerId !== activePointerId) return;
+  activePointerId = null;
+  regionOrigin = null;
+  regionPoint = null;
+  draw();
+  renderBadge();
+}
+
+async function submitRegion(rect: PenRect): Promise<void> {
+  try {
+    await window.kePen.submitShotRegion({
+      displayId: bootstrap.displayId,
+      screenWidth: bootstrap.screenWidth,
+      screenHeight: bootstrap.screenHeight,
+      rect,
+    });
+  } catch (error) {
+    regionSubmitted = false;
+    badgeDetail.textContent =
+      error instanceof Error ? error.message : "KE Shot could not capture that region.";
+  }
+}
+
+function currentRegion(): PenRect | null {
+  if (!regionOrigin || !regionPoint) return null;
+  const x = Math.min(regionOrigin.x, regionPoint.x);
+  const y = Math.min(regionOrigin.y, regionPoint.y);
+  return {
+    x,
+    y,
+    width: Math.abs(regionPoint.x - regionOrigin.x),
+    height: Math.abs(regionPoint.y - regionOrigin.y),
+  };
 }
 
 function handlePointerDown(event: PointerEvent): void {
@@ -111,6 +200,7 @@ function handleKeyDown(event: KeyboardEvent): void {
     window.kePen.cancel();
     return;
   }
+  if (bootstrap?.mode === "shot") return;
   if (phase === "drawing" && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
     event.preventDefault();
     window.clearTimeout(finalizeTimer);
@@ -196,6 +286,10 @@ function resizeCanvas(): void {
 }
 
 function draw(): void {
+  if (bootstrap?.mode === "shot") {
+    drawRegion();
+    return;
+  }
   const ratio = window.devicePixelRatio || 1;
   context.setTransform(ratio, 0, 0, ratio, 0, 0);
   context.clearRect(0, 0, window.innerWidth, window.innerHeight);
@@ -214,7 +308,30 @@ function draw(): void {
   }
 }
 
+function drawRegion(): void {
+  const ratio = window.devicePixelRatio || 1;
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  context.clearRect(0, 0, window.innerWidth, window.innerHeight);
+  context.fillStyle = "rgba(9, 9, 12, 0.38)";
+  context.fillRect(0, 0, window.innerWidth, window.innerHeight);
+  const rect = currentRegion();
+  if (!rect || rect.width < 1 || rect.height < 1) return;
+  context.clearRect(rect.x, rect.y, rect.width, rect.height);
+  context.strokeStyle = "rgba(255, 58, 42, 0.98)";
+  context.lineWidth = 1;
+  context.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.width - 1, rect.height - 1);
+}
+
 function renderBadge(): void {
+  if (bootstrap?.mode === "shot") {
+    const rect = currentRegion();
+    badgeDetail.textContent =
+      rect && rect.width >= 1 && rect.height >= 1
+        ? `${Math.round(rect.width)} × ${Math.round(rect.height)} · release to capture`
+        : `DRAG A REGION · Esc to cancel${bootstrap.shortcut ? ` · ${bootstrap.shortcut}` : ""}`;
+    document.body.dataset.phase = phase;
+    return;
+  }
   const labels: Record<string, string> = {
     drawing: `DRAW · release to send · ${bootstrap?.shortcut ?? ""}`,
     queued: "AI IS LOOKING · ink stays until reply",

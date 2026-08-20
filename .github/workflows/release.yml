@@ -18,11 +18,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --verify-tag \
-            --draft \
-            --title "KE Pen ${GITHUB_REF_NAME#v} — free for macOS, Windows, and Linux" \
-            --notes-file .github/RELEASE_NOTES_v0.3.0.md
+          set -euo pipefail
+          # Notes follow the tag. A hard-coded filename silently publishes the
+          # previous version's notes for every release after the one it names.
+          notes=".github/RELEASE_NOTES_${GITHUB_REF_NAME}.md"
+          if [ -f "$notes" ]; then
+            gh release create "$GITHUB_REF_NAME" \
+              --verify-tag \
+              --draft \
+              --title "KE Pen ${GITHUB_REF_NAME#v} — free for macOS, Windows, and Linux" \
+              --notes-file "$notes"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --verify-tag \
+              --draft \
+              --title "KE Pen ${GITHUB_REF_NAME#v} — free for macOS, Windows, and Linux" \
+              --generate-notes
+          fi
 
   build:
     name: Release build · ${{ matrix.label }}
