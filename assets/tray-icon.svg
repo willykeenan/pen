@@ -1,13 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" role="img" aria-labelledby="title desc">
   <title id="title">KE Pen menu bar glyph</title>
-  <desc id="desc">Monochrome camera stencil for the macOS menu bar. Black with alpha only: shipped as a template image so the system recolors it for light and dark menu bars.</desc>
-  <!-- Drawn extra-bold on the 1024 grid because it renders at 18 x 18 points.
-       Geometry matches the Dock tile's camera so the two read as one mark. -->
-  <g fill="none" stroke="#000" stroke-width="86" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M384 330 L430 250 h164 L656 330"/>
-    <rect x="196" y="330" width="632" height="446" rx="96"/>
-    <circle cx="512" cy="548" r="138"/>
+  <desc id="desc">A transparent monochrome fountain-pen nib designed for an 18-point macOS template image.</desc>
+  <g transform="rotate(-36 18 18)" fill="#000000">
+    <rect x="14.6" y="3" width="6.8" height="14" rx="3.4"/>
+    <path d="M14.6 15.2H21.4L24.3 22.7L18 32L11.7 22.7Z"/>
   </g>
-  <circle cx="512" cy="548" r="60" fill="#000"/>
+  <g transform="rotate(-36 18 18)" fill="none" stroke="#ffffff" stroke-width="1.9" stroke-linecap="round">
+    <path d="M18 19V27"/>
+  </g>
 </svg>

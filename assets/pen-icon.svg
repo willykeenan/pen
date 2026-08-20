@@ -1,38 +1,85 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
   <title id="title">KE Pen</title>
-  <desc id="desc">A white camera stencil with a red ink stroke on a dark rounded tile, matching the K&amp;E Studios app-icon family.</desc>
+  <desc id="desc">An ivory fountain-pen nib with an orange ink pulse on a dark glass and brushed-metal K&amp;E Studios app tile.</desc>
   <defs>
-    <linearGradient id="field" x1="140" y1="120" x2="884" y2="904" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#1a1a21"/>
-      <stop offset="1" stop-color="#08080c"/>
+    <linearGradient id="metal" x1="112" y1="44" x2="914" y2="982" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#c7c8c5"/>
+      <stop offset="0.16" stop-color="#777a7c"/>
+      <stop offset="0.38" stop-color="#3e4144"/>
+      <stop offset="0.60" stop-color="#9c9e9d"/>
+      <stop offset="0.82" stop-color="#55585b"/>
+      <stop offset="1" stop-color="#b8b9b6"/>
     </linearGradient>
-    <clipPath id="tile-clip">
-      <rect x="100" y="100" width="824" height="824" rx="186"/>
+    <linearGradient id="rim" x1="144" y1="78" x2="878" y2="936" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2c2f31"/>
+      <stop offset="0.5" stop-color="#050708"/>
+      <stop offset="1" stop-color="#313438"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="218" y1="116" x2="794" y2="926" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#202a30"/>
+      <stop offset="0.48" stop-color="#10191e"/>
+      <stop offset="1" stop-color="#050a0d"/>
+    </linearGradient>
+    <linearGradient id="ivory" x1="348" y1="236" x2="686" y2="814" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fffaf0"/>
+      <stop offset="0.55" stop-color="#f4ebda"/>
+      <stop offset="1" stop-color="#d9cbb2"/>
+    </linearGradient>
+    <linearGradient id="orange" x1="434" y1="564" x2="602" y2="704" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ff8b28"/>
+      <stop offset="0.52" stop-color="#f36210"/>
+      <stop offset="1" stop-color="#d8410d"/>
+    </linearGradient>
+    <radialGradient id="glass-glow" cx="0" cy="0" r="1" gradientTransform="translate(344 206) rotate(39) scale(686 522)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff" stop-opacity="0.16"/>
+      <stop offset="0.42" stop-color="#ffffff" stop-opacity="0.035"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="tile-shadow" x="-18%" y="-18%" width="136%" height="142%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#000000" flood-opacity="0.52"/>
+    </filter>
+    <filter id="pulse-shadow" x="-80%" y="-80%" width="260%" height="270%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="7" stdDeviation="7" flood-color="#000000" flood-opacity="0.62"/>
+      <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="#f36210" flood-opacity="0.24"/>
+    </filter>
+    <clipPath id="face-clip">
+      <rect x="86" y="70" width="852" height="884" rx="176"/>
     </clipPath>
   </defs>
 
-  <!-- Tile: dark rounded square with a hairline lift, same family as the KE "&" icon -->
-  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#field)"/>
-  <rect x="100" y="100" width="824" height="824" rx="186" fill="none" stroke="#ffffff" stroke-opacity="0.09" stroke-width="6"/>
-  <g clip-path="url(#tile-clip)">
-    <path d="M186 342h652M186 512h652M186 682h652M342 186v652M512 186v652M682 186v652"
-          fill="none" stroke="#fff" stroke-opacity="0.03" stroke-width="2"/>
+  <g filter="url(#tile-shadow)">
+    <rect x="18" y="12" width="988" height="988" rx="224" fill="url(#metal)"/>
+    <rect x="22" y="16" width="980" height="980" rx="220" fill="none" stroke="#ffffff" stroke-opacity="0.34" stroke-width="5"/>
+    <rect x="49" y="42" width="926" height="930" rx="202" fill="url(#rim)"/>
+    <rect x="58" y="51" width="908" height="912" rx="193" fill="none" stroke="#000000" stroke-opacity="0.76" stroke-width="10"/>
+    <rect x="76" y="60" width="872" height="904" rx="184" fill="#050708"/>
+    <rect x="86" y="70" width="852" height="884" rx="176" fill="url(#glass)"/>
   </g>
 
-  <!-- Camera stencil: white strokes only, no fills, so it reads as cut metal -->
-  <g fill="none" stroke="#f4f2ec" stroke-width="46" stroke-linecap="round" stroke-linejoin="round">
-    <!-- viewfinder hump + body -->
-    <path d="M400 348 L436 288 h152 L624 348"/>
-    <rect x="266" y="348" width="492" height="342" rx="64"/>
-    <!-- lens, double ring -->
-    <circle cx="512" cy="516" r="108"/>
+  <g clip-path="url(#face-clip)">
+    <path d="M118 260H906M118 512H906M118 764H906M260 104V930M512 104V930M764 104V930"
+          fill="none" stroke="#d9edf5" stroke-opacity="0.105" stroke-width="2"/>
+    <path d="M118 386H906M118 638H906M386 104V930M638 104V930"
+          fill="none" stroke="#d9edf5" stroke-opacity="0.045" stroke-width="1"/>
+    <ellipse cx="342" cy="110" rx="620" ry="420" fill="url(#glass-glow)"/>
+    <path d="M118 132C282 76 706 72 904 114C846 274 760 316 604 330C402 348 232 288 118 132Z"
+          fill="#ffffff" fill-opacity="0.035"/>
   </g>
-  <circle cx="512" cy="516" r="44" fill="#f4f2ec"/>
-  <!-- shutter dot, top right of the body -->
-  <circle cx="686" cy="414" r="21" fill="#f4f2ec"/>
 
-  <!-- The signature: one hand-drawn red ink stroke, the same ink the pen draws with -->
-  <path d="M296 784 C 388 750, 452 818, 546 782 S 700 742, 736 776"
-        fill="none" stroke="#ed5f48" stroke-width="34" stroke-linecap="round"/>
+  <g transform="rotate(-34 512 512)">
+    <rect x="437" y="185" width="150" height="392" rx="75" fill="url(#ivory)"/>
+    <path d="M437 516H587L635 657L512 844L389 657Z" fill="url(#ivory)"/>
+    <path d="M512 571V746" fill="none" stroke="#1a2227" stroke-width="24" stroke-linecap="round"/>
+    <circle cx="512" cy="625" r="42" fill="#162026" stroke="#f4ebda" stroke-width="10"/>
+    <path d="M512 746V826" fill="none" stroke="#1a2227" stroke-width="18" stroke-linecap="round"/>
+    <path d="M474 211H550" fill="none" stroke="#ffffff" stroke-opacity="0.34" stroke-width="9" stroke-linecap="round"/>
+  </g>
+
+  <g filter="url(#pulse-shadow)">
+    <rect x="710" y="690" width="106" height="106" rx="19" fill="url(#orange)" stroke="#f5e6cf" stroke-opacity="0.72" stroke-width="7"/>
+    <path d="M730 711H796" fill="none" stroke="#ffffff" stroke-opacity="0.42" stroke-width="8" stroke-linecap="round"/>
+  </g>
+
+  <rect x="86" y="70" width="852" height="884" rx="176" fill="none" stroke="#e8edf0" stroke-opacity="0.18" stroke-width="5"/>
 </svg>
