@@ -19,7 +19,7 @@ import {
   type NativeImage,
 } from "electron";
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, copyFile, mkdir } from "node:fs/promises";
+import { chmod, copyFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { AnnotationStore } from "../src/store.js";
 import type { AnnotationRecord } from "../src/types.js";
@@ -917,12 +917,26 @@ async function copyAiSetup(): Promise<void> {
       userDataPath: app.getPath("userData"),
       ...(appImagePath ? { appImagePath } : {}),
     });
+    let appImageHelperDirectory: string | undefined;
     if (serverPath !== bundledServerPath) {
       await mkdir(path.dirname(serverPath), { recursive: true, mode: 0o700 });
       await copyFile(bundledServerPath, serverPath);
       await chmod(serverPath, 0o600);
+
+      // electron-builder's AppImage wrapper adds a Chromium --no-sandbox flag
+      // when its user-namespace probe fails. ELECTRON_RUN_AS_NODE has no
+      // Chromium process and rejects that GUI flag, so this private, fixed
+      // probe keeps the wrapper on its headless path. It is scoped only to the
+      // copied MCP process environment and never changes the GUI launch.
+      appImageHelperDirectory = path.join(path.dirname(serverPath), "bin");
+      const unshareProbe = path.join(appImageHelperDirectory, "unshare");
+      await mkdir(appImageHelperDirectory, { recursive: true, mode: 0o700 });
+      await writeFile(unshareProbe, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+      await chmod(unshareProbe, 0o700);
     }
-    clipboard.writeText(createMcpHostConfig(executablePath, serverPath));
+    clipboard.writeText(
+      createMcpHostConfig(executablePath, serverPath, appImageHelperDirectory),
+    );
     await dialog.showMessageBox({
       type: "info",
       title: "KE Pen AI setup copied",

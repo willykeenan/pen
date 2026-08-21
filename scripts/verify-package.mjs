@@ -1,4 +1,13 @@
-import { access, copyFile, mkdtemp, readdir, rm } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -39,12 +48,21 @@ if (platform === "linux") {
   const appImage = await findAppImage();
   const stagingDirectory = await mkdtemp(path.join(os.tmpdir(), "ke-pen-appimage-mcp-"));
   const stagedServer = path.join(stagingDirectory, "index.js");
+  const helperDirectory = path.join(stagingDirectory, "bin");
+  const unshareProbe = path.join(helperDirectory, "unshare");
   try {
     await copyFile(serverPath, stagedServer);
+    await mkdir(helperDirectory, { mode: 0o700 });
+    await writeFile(unshareProbe, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    await chmod(unshareProbe, 0o700);
     await verifyBridge(
       appImage,
       stagedServer,
-      { APPIMAGE_EXTRACT_AND_RUN: "1", ELECTRON_RUN_AS_NODE: "1" },
+      {
+        APPIMAGE_EXTRACT_AND_RUN: "1",
+        ELECTRON_RUN_AS_NODE: "1",
+        PATH: `${helperDirectory}:/usr/bin:/bin`,
+      },
       "AppImage",
     );
   } finally {

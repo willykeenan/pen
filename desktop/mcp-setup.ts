@@ -1,6 +1,10 @@
 import path from "node:path";
 
-export function createMcpHostConfig(executablePath: string, serverPath: string): string {
+export function createMcpHostConfig(
+  executablePath: string,
+  serverPath: string,
+  appImageHelperDirectory?: string,
+): string {
   return `${JSON.stringify(
     {
       mcpServers: {
@@ -9,6 +13,9 @@ export function createMcpHostConfig(executablePath: string, serverPath: string):
           args: [serverPath],
           env: {
             ELECTRON_RUN_AS_NODE: "1",
+            ...(appImageHelperDirectory
+              ? { PATH: `${appImageHelperDirectory}:/usr/bin:/bin` }
+              : {}),
           },
         },
       },

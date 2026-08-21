@@ -26,6 +26,20 @@ test("the copied MCP setup launches the server embedded in the installed app", (
   });
 });
 
+test("AppImage setup scopes its launcher probe to the private MCP directory", () => {
+  const config = JSON.parse(
+    createMcpHostConfig(
+      "/home/charles/Downloads/KE-Pen.AppImage",
+      "/home/charles/.config/KE Pen/mcp/index.js",
+      "/home/charles/.config/KE Pen/mcp/bin",
+    ),
+  );
+  assert.deepEqual(config.mcpServers.pen.env, {
+    ELECTRON_RUN_AS_NODE: "1",
+    PATH: "/home/charles/.config/KE Pen/mcp/bin:/usr/bin:/bin",
+  });
+});
+
 test("AppImage setup uses its stable original path rather than the temporary mount", () => {
   assert.equal(
     packagedExecutablePath({
