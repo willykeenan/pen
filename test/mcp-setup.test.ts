@@ -9,6 +9,9 @@ test("the copied MCP setup launches the server embedded in the installed app", (
       pen: {
         command: "/Applications/KE Pen.app/Contents/MacOS/KE Pen",
         args: ["--mcp-server"],
+        env: {
+          KE_PEN_MCP_SERVER: "1",
+        },
       },
     },
   });

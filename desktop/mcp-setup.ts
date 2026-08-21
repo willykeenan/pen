@@ -5,6 +5,9 @@ export function createMcpHostConfig(executablePath: string): string {
         pen: {
           command: executablePath,
           args: ["--mcp-server"],
+          env: {
+            KE_PEN_MCP_SERVER: "1",
+          },
         },
       },
     },

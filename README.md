@@ -186,7 +186,7 @@ source-based installation instead, install the public GitHub package after
 Node.js 20 or newer:
 
 ```bash
-npm install --global github:willykeenan/pen#v0.4.1
+npm install --global github:willykeenan/pen#v0.4.2
 ```
 
 Then configure your AI host:

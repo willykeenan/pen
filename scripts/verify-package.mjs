@@ -33,6 +33,7 @@ process.stdout.write(`Verified packaged KE Pen executable: ${executable}\n${outp
 const transport = new StdioClientTransport({
   command: executable,
   args: ["--mcp-server"],
+  env: { KE_PEN_MCP_SERVER: "1" },
   stderr: "pipe",
 });
 const client = new Client({ name: "pen-packaged-bridge-check", version: "1.0.0" });

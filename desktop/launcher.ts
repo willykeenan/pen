@@ -1,5 +1,5 @@
 async function launch(): Promise<void> {
-  if (process.argv.includes("--mcp-server")) {
+  if (process.env.KE_PEN_MCP_SERVER === "1" || process.argv.includes("--mcp-server")) {
     const [{ StdioServerTransport }, { createPenServer, SERVER_VERSION }] = await Promise.all([
       import("@modelcontextprotocol/sdk/server/stdio.js"),
       import("../src/server.js"),
