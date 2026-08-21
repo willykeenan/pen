@@ -1,16 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createMcpHostConfig, packagedExecutablePath } from "../desktop/mcp-setup.js";
+import {
+  createMcpHostConfig,
+  packagedExecutablePath,
+  packagedMcpServerPath,
+} from "../desktop/mcp-setup.js";
 
 test("the copied MCP setup launches the server embedded in the installed app", () => {
-  const config = JSON.parse(createMcpHostConfig("/Applications/KE Pen.app/Contents/MacOS/KE Pen"));
+  const config = JSON.parse(
+    createMcpHostConfig(
+      "/Applications/KE Pen.app/Contents/MacOS/KE Pen",
+      "/Applications/KE Pen.app/Contents/Resources/mcp/index.js",
+    ),
+  );
   assert.deepEqual(config, {
     mcpServers: {
       pen: {
         command: "/Applications/KE Pen.app/Contents/MacOS/KE Pen",
-        args: ["--mcp-server"],
+        args: ["/Applications/KE Pen.app/Contents/Resources/mcp/index.js"],
         env: {
-          KE_PEN_MCP_SERVER: "1",
+          ELECTRON_RUN_AS_NODE: "1",
         },
       },
     },
@@ -29,5 +38,25 @@ test("AppImage setup uses its stable original path rather than the temporary mou
   assert.equal(
     packagedExecutablePath({ platform: "darwin", executablePath: "/Applications/KE Pen.app" }),
     "/Applications/KE Pen.app",
+  );
+});
+
+test("AppImage setup stages its bundled server outside the temporary mount", () => {
+  assert.equal(
+    packagedMcpServerPath({
+      platform: "linux",
+      resourcesPath: "/tmp/.mount_KEPen/resources",
+      userDataPath: "/home/charles/.config/KE Pen",
+      appImagePath: "/home/charles/Downloads/KE-Pen.AppImage",
+    }),
+    "/home/charles/.config/KE Pen/mcp/index.js",
+  );
+  assert.equal(
+    packagedMcpServerPath({
+      platform: "darwin",
+      resourcesPath: "/Applications/KE Pen.app/Contents/Resources",
+      userDataPath: "/Users/charles/Library/Application Support/KE Pen",
+    }),
+    "/Applications/KE Pen.app/Contents/Resources/mcp/index.js",
   );
 });

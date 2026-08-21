@@ -4,7 +4,7 @@ import { AnnotationStore } from "./store.js";
 import { penComplete, penRead, penStatus } from "./tools.js";
 
 export const SERVER_NAME = "pen-by-ke-studios";
-export const SERVER_VERSION = "0.4.2";
+export const SERVER_VERSION = "0.4.3";
 
 export function createPenServer(store = new AnnotationStore()): McpServer {
   const server = new McpServer(

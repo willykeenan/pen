@@ -19,6 +19,7 @@ import {
   type NativeImage,
 } from "electron";
 import { createHash, randomUUID } from "node:crypto";
+import { chmod, copyFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { AnnotationStore } from "../src/store.js";
 import type { AnnotationRecord } from "../src/types.js";
@@ -31,7 +32,11 @@ import {
   type CopyMode,
   type ShotHistoryEntry,
 } from "./shot-core.js";
-import { createMcpHostConfig, packagedExecutablePath } from "./mcp-setup.js";
+import {
+  createMcpHostConfig,
+  packagedExecutablePath,
+  packagedMcpServerPath,
+} from "./mcp-setup.js";
 
 type PenPhase = "idle" | "drawing" | "queued" | "reading" | "completing" | "clearing";
 
@@ -871,22 +876,7 @@ function penMenuSection(): MenuItemConstructorOptions[] {
     { type: "separator" },
     {
       label: "Copy AI setup",
-      click: () => {
-        const executablePath = packagedExecutablePath({
-          platform: process.platform,
-          executablePath: process.execPath,
-          ...(process.env.APPIMAGE ? { appImagePath: process.env.APPIMAGE } : {}),
-        });
-        clipboard.writeText(createMcpHostConfig(executablePath));
-        void dialog.showMessageBox({
-          type: "info",
-          title: "KE Pen AI setup copied",
-          message: "Paste this into your AI host's MCP configuration, then restart the host.",
-          detail:
-            "The copied setup runs the MCP server already inside this KE Pen installation. " +
-            "It does not install software, open a port, or send any screen image by itself.",
-        });
-      },
+      click: () => void copyAiSetup(),
     },
     {
       label: "Free downloads and setup",
@@ -910,6 +900,45 @@ function penMenuSection(): MenuItemConstructorOptions[] {
     { label: "Quit KE Pen", click: () => app.quit() },
   ];
   return template;
+}
+
+async function copyAiSetup(): Promise<void> {
+  try {
+    const appImagePath = process.env.APPIMAGE;
+    const executablePath = packagedExecutablePath({
+      platform: process.platform,
+      executablePath: process.execPath,
+      ...(appImagePath ? { appImagePath } : {}),
+    });
+    const bundledServerPath = path.join(process.resourcesPath, "mcp", "index.js");
+    const serverPath = packagedMcpServerPath({
+      platform: process.platform,
+      resourcesPath: process.resourcesPath,
+      userDataPath: app.getPath("userData"),
+      ...(appImagePath ? { appImagePath } : {}),
+    });
+    if (serverPath !== bundledServerPath) {
+      await mkdir(path.dirname(serverPath), { recursive: true, mode: 0o700 });
+      await copyFile(bundledServerPath, serverPath);
+      await chmod(serverPath, 0o600);
+    }
+    clipboard.writeText(createMcpHostConfig(executablePath, serverPath));
+    await dialog.showMessageBox({
+      type: "info",
+      title: "KE Pen AI setup copied",
+      message: "Paste this into your AI host's MCP configuration, then restart the host.",
+      detail:
+        "The copied setup runs the MCP server already inside this KE Pen installation. " +
+        "It does not install software, open a port, or send any screen image by itself.",
+    });
+  } catch (error: unknown) {
+    await dialog.showMessageBox({
+      type: "error",
+      title: "KE Pen could not copy AI setup",
+      message: error instanceof Error ? error.message : "The embedded MCP server was unavailable.",
+      detail: "No configuration was copied. Reinstall KE Pen and try again.",
+    });
+  }
 }
 
 function contextFor(event: IpcMainInvokeEvent | IpcMainEvent): OverlayContext {
