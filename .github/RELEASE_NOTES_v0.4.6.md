@@ -23,9 +23,10 @@ The packaged bridge is exercised during the macOS, Windows, Linux installed,
 and Linux AppImage release builds before the release is published. Version
 0.4.6 launches the asar-less embedded server through the app's packaged Node
 runtime, avoiding any hidden GUI or display dependency in the AI-host connection.
-The AppImage stages that runtime in KE Pen's owner-only local data directory when
-the user chooses **Copy AI setup**, because the AppImage mount wrapper is not a
-transparent stdio transport.
+The AppImage stages its complete packaged runtime in KE Pen's owner-only local
+data directory when the user chooses **Copy AI setup**, because Linux loads
+supporting libraries from beside the executable and the AppImage mount wrapper
+is not a transparent stdio transport.
 
 ## Also included
 

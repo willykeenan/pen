@@ -2,6 +2,7 @@ import {
   access,
   chmod,
   copyFile,
+  cp,
   mkdtemp,
   readdir,
   rm,
@@ -60,11 +61,17 @@ if (platform === "linux") {
 
   const stagingDirectory = await mkdtemp(path.join(os.tmpdir(), "ke-pen-appimage-mcp-"));
   const stagedServer = path.join(stagingDirectory, "index.js");
-  const stagedRuntime = path.join(stagingDirectory, "ke-pen-node");
+  const stagedRuntimeDirectory = path.join(stagingDirectory, "runtime");
+  const stagedRuntime = path.join(stagedRuntimeDirectory, path.basename(executable));
   try {
     await copyFile(serverPath, stagedServer);
-    await copyFile(executable, stagedRuntime);
+    await cp(path.dirname(executable), stagedRuntimeDirectory, {
+      recursive: true,
+      force: true,
+    });
+    await chmod(stagedRuntimeDirectory, 0o700);
     await chmod(stagedRuntime, 0o700);
+    await chmod(path.join(stagedRuntimeDirectory, "chrome-sandbox"), 0o700);
     await verifyBridge(
       stagedRuntime,
       stagedServer,

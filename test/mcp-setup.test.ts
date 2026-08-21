@@ -32,9 +32,9 @@ test("AppImage setup uses its stable private runtime rather than the temporary m
       platform: "linux",
       executablePath: "/tmp/.mount_KEPen/ke-pen",
       appImagePath: "/home/charles/Downloads/KE-Pen.AppImage",
-      appImageRuntimePath: "/home/charles/.config/KE Pen/mcp/runtime/ke-pen-node",
+      appImageRuntimePath: "/home/charles/.config/KE Pen/mcp/runtime/ke-pen",
     }),
-    "/home/charles/.config/KE Pen/mcp/runtime/ke-pen-node",
+    "/home/charles/.config/KE Pen/mcp/runtime/ke-pen",
   );
   assert.throws(
     () =>

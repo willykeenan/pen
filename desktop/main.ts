@@ -19,7 +19,7 @@ import {
   type NativeImage,
 } from "electron";
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, copyFile, mkdir } from "node:fs/promises";
+import { chmod, copyFile, cp, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { AnnotationStore } from "../src/store.js";
 import type { AnnotationRecord } from "../src/types.js";
@@ -920,14 +920,20 @@ async function copyAiSetup(): Promise<void> {
 
       // AppImage's mount/extract wrapper is not a transparent stdio transport.
       // Keep the GUI AppImage where the user put it, but copy its packaged
-      // Electron/Node executable into this owner-only MCP directory. The AI
-      // host then launches the embedded server directly with no display,
-      // wrapper, system Node.js, listening port, or network dependency.
+      // Electron/Node runtime into this owner-only MCP directory. Linux loads
+      // data and shared libraries from beside the executable, so the complete
+      // packaged runtime must stay together. The AI host then launches the
+      // embedded server directly with no display, wrapper, system Node.js,
+      // listening port, or network dependency.
       const runtimeDirectory = path.join(path.dirname(serverPath), "runtime");
-      appImageRuntimePath = path.join(runtimeDirectory, "ke-pen-node");
-      await mkdir(runtimeDirectory, { recursive: true, mode: 0o700 });
-      await copyFile(process.execPath, appImageRuntimePath);
+      await cp(path.dirname(process.execPath), runtimeDirectory, {
+        recursive: true,
+        force: true,
+      });
+      appImageRuntimePath = path.join(runtimeDirectory, path.basename(process.execPath));
+      await chmod(runtimeDirectory, 0o700);
       await chmod(appImageRuntimePath, 0o700);
+      await chmod(path.join(runtimeDirectory, "chrome-sandbox"), 0o700);
     }
     if (appImagePath && !appImageRuntimePath) {
       throw new Error("KE Pen could not prepare its private AppImage MCP runtime.");
