@@ -144,6 +144,7 @@ if (IS_SMOKE_TEST) {
     // has to come up exactly as it did before.
     await createShot().catch(() => undefined);
     applyDockVisibility();
+    applyDockMenu();
     createTray();
     const penRegistered = globalShortcut.register(SHORTCUT, () => void togglePen());
     const shotRegistered = registerShotShortcut();
@@ -227,6 +228,18 @@ function applyDockVisibility(showInDock = shot?.settings.current.showInDock ?? f
   if (process.platform !== "darwin") return;
   if (showInDock) void app.dock?.show();
   else app.dock?.hide();
+}
+
+// A plain Dock click stays the screenshot button (the "activate" handler);
+// right-click is where the pen lives, above macOS's own Dock entries.
+function applyDockMenu(): void {
+  if (process.platform !== "darwin") return;
+  app.dock?.setMenu(
+    Menu.buildFromTemplate([
+      { label: "Capture Screenshot", click: () => void runShot() },
+      { label: "Draw with KE Pen", click: () => void togglePen() },
+    ]),
+  );
 }
 
 function applyTrayTooltip(penRegistered: boolean, shotRegistered: boolean): void {
