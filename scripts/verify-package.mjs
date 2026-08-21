@@ -2,11 +2,9 @@ import {
   access,
   chmod,
   copyFile,
-  mkdir,
   mkdtemp,
   readdir,
   rm,
-  writeFile,
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -46,24 +44,32 @@ await verifyBridge(executable, serverPath, { ELECTRON_RUN_AS_NODE: "1" }, "insta
 
 if (platform === "linux") {
   const appImage = await findAppImage();
+  const appImageResult = spawnSync(appImage, ["--smoke-test"], {
+    encoding: "utf8",
+    env: { ...process.env, APPIMAGE_EXTRACT_AND_RUN: "1" },
+    timeout: 30_000,
+  });
+  if (appImageResult.error) throw appImageResult.error;
+  const appImageOutput = `${appImageResult.stdout ?? ""}${appImageResult.stderr ?? ""}`;
+  if (appImageResult.status !== 0 || !appImageOutput.includes('"product":"KE Pen"')) {
+    throw new Error(
+      `Packaged KE Pen AppImage smoke test failed (${appImageResult.status}).\n${appImageOutput}`,
+    );
+  }
+  process.stdout.write(`Verified packaged KE Pen AppImage GUI launch.\n${appImageOutput}`);
+
   const stagingDirectory = await mkdtemp(path.join(os.tmpdir(), "ke-pen-appimage-mcp-"));
   const stagedServer = path.join(stagingDirectory, "index.js");
-  const helperDirectory = path.join(stagingDirectory, "bin");
-  const unshareProbe = path.join(helperDirectory, "unshare");
+  const stagedRuntime = path.join(stagingDirectory, "ke-pen-node");
   try {
     await copyFile(serverPath, stagedServer);
-    await mkdir(helperDirectory, { mode: 0o700 });
-    await writeFile(unshareProbe, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
-    await chmod(unshareProbe, 0o700);
+    await copyFile(executable, stagedRuntime);
+    await chmod(stagedRuntime, 0o700);
     await verifyBridge(
-      appImage,
+      stagedRuntime,
       stagedServer,
-      {
-        APPIMAGE_EXTRACT_AND_RUN: "1",
-        ELECTRON_RUN_AS_NODE: "1",
-        PATH: `${helperDirectory}:/usr/bin:/bin`,
-      },
-      "AppImage",
+      { ELECTRON_RUN_AS_NODE: "1" },
+      "AppImage-staged private runtime",
     );
   } finally {
     await rm(stagingDirectory, { recursive: true, force: true });

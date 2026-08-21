@@ -1,10 +1,6 @@
 import path from "node:path";
 
-export function createMcpHostConfig(
-  executablePath: string,
-  serverPath: string,
-  appImageHelperDirectory?: string,
-): string {
+export function createMcpHostConfig(executablePath: string, serverPath: string): string {
   return `${JSON.stringify(
     {
       mcpServers: {
@@ -13,9 +9,6 @@ export function createMcpHostConfig(
           args: [serverPath],
           env: {
             ELECTRON_RUN_AS_NODE: "1",
-            ...(appImageHelperDirectory
-              ? { PATH: `${appImageHelperDirectory}:/usr/bin:/bin` }
-              : {}),
           },
         },
       },
@@ -42,7 +35,13 @@ export function packagedExecutablePath(options: {
   platform: NodeJS.Platform;
   executablePath: string;
   appImagePath?: string;
+  appImageRuntimePath?: string;
 }): string {
-  if (options.platform === "linux" && options.appImagePath) return options.appImagePath;
+  if (options.platform === "linux" && options.appImagePath) {
+    if (!options.appImageRuntimePath) {
+      throw new Error("KE Pen could not prepare its private AppImage MCP runtime.");
+    }
+    return options.appImageRuntimePath;
+  }
   return options.executablePath;
 }
