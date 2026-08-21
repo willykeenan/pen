@@ -19,7 +19,7 @@ const shared = {
 
 await build({
   ...shared,
-  entryPoints: [path.join(root, "desktop", "main.ts")],
+  entryPoints: [path.join(root, "desktop", "launcher.ts")],
   outfile: path.join(output, "main.cjs"),
   platform: "node",
   format: "cjs",

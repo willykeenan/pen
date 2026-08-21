@@ -35,6 +35,19 @@ require right-click → **Open**, Windows may show SmartScreen, and Linux may
 require `chmod +x` for the AppImage. The source, checksums, and native build
 workflows are public so anyone can inspect or reproduce the artifacts.
 
+### First minute after install
+
+1. Launch KE Pen once and allow the operating system's screen-capture prompt.
+2. Open the KE Pen tray/menu-bar menu and choose **Copy AI setup**.
+3. Paste the copied JSON into your MCP-capable AI host's configuration and
+   restart that host.
+4. Press the Pen shortcut, circle something harmless, and ask the host to
+   “look at the pen.”
+
+The copied setup uses the MCP server already embedded in the installed app. It
+does not need a separate Node.js or npm install, opens no listening port, and
+does not upload a screen image by itself.
+
 ## The entire interaction
 
 1. Press `⌃⌥⌘P` on macOS or `Ctrl+Alt+P` on Windows/Linux, or click the KE Pen tray icon.
@@ -168,11 +181,12 @@ users can set `KE_PEN_NATIVE_WAYLAND=1`, with compositor-dependent behavior.
 ## Connect the MCP server
 
 KE Pen's app and MCP server share a private local annotation directory. The
-most consistent setup on every operating system is to install the public GitHub
-package after Node.js 20 or newer:
+recommended setup is **Copy AI setup** in the installed app's tray menu. For a
+source-based installation instead, install the public GitHub package after
+Node.js 20 or newer:
 
 ```bash
-npm install --global github:willykeenan/pen#v0.4.0
+npm install --global github:willykeenan/pen#v0.4.1
 ```
 
 Then configure your AI host:

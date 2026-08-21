@@ -31,6 +31,7 @@ import {
   type CopyMode,
   type ShotHistoryEntry,
 } from "./shot-core.js";
+import { createMcpHostConfig, packagedExecutablePath } from "./mcp-setup.js";
 
 type PenPhase = "idle" | "drawing" | "queued" | "reading" | "completing" | "clearing";
 
@@ -868,6 +869,25 @@ function penMenuSection(): MenuItemConstructorOptions[] {
     },
     { label: "Open local Pen data", click: () => void shell.openPath(store.root) },
     { type: "separator" },
+    {
+      label: "Copy AI setup",
+      click: () => {
+        const executablePath = packagedExecutablePath({
+          platform: process.platform,
+          executablePath: process.execPath,
+          ...(process.env.APPIMAGE ? { appImagePath: process.env.APPIMAGE } : {}),
+        });
+        clipboard.writeText(createMcpHostConfig(executablePath));
+        void dialog.showMessageBox({
+          type: "info",
+          title: "KE Pen AI setup copied",
+          message: "Paste this into your AI host's MCP configuration, then restart the host.",
+          detail:
+            "The copied setup runs the MCP server already inside this KE Pen installation. " +
+            "It does not install software, open a port, or send any screen image by itself.",
+        });
+      },
+    },
     {
       label: "Free downloads and setup",
       click: () => void shell.openExternal("https://kestudios.dev/pen?ref=pen-app"),
