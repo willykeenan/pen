@@ -59,4 +59,12 @@ test("AppImage setup stages its bundled server outside the temporary mount", () 
     }),
     "/Applications/KE Pen.app/Contents/Resources/mcp/index.js",
   );
+  assert.equal(
+    packagedMcpServerPath({
+      platform: "win32",
+      resourcesPath: "C:\\Program Files\\KE Pen\\resources",
+      userDataPath: "C:\\Users\\charles\\AppData\\Roaming\\KE Pen",
+    }),
+    "C:\\Program Files\\KE Pen\\resources\\mcp\\index.js",
+  );
 });

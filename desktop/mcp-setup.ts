@@ -24,10 +24,11 @@ export function packagedMcpServerPath(options: {
   userDataPath: string;
   appImagePath?: string;
 }): string {
+  const targetPath = options.platform === "win32" ? path.win32 : path.posix;
   if (options.platform === "linux" && options.appImagePath) {
-    return path.join(options.userDataPath, "mcp", "index.js");
+    return targetPath.join(options.userDataPath, "mcp", "index.js");
   }
-  return path.join(options.resourcesPath, "mcp", "index.js");
+  return targetPath.join(options.resourcesPath, "mcp", "index.js");
 }
 
 export function packagedExecutablePath(options: {
