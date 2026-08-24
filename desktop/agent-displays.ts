@@ -48,6 +48,7 @@ let snapshot: DisplaySnapshot;
 let selectedSessionId: string | null = null;
 let refreshing = false;
 let timer: number | undefined;
+let renderedFrameDataUrl: string | null = null;
 
 void initialize();
 
@@ -142,11 +143,25 @@ function render(): void {
   cursorLabel.textContent = session.controller === "human" ? "William" : session.label.split(" · ")[0] ?? "Agent";
 
   if (snapshot.frame?.dataUrl && session.state === "ready") {
-    frame.src = snapshot.frame.dataUrl;
     frame.hidden = false;
-    frame.onload = positionCursor;
+    frame.onload = () => {
+      frame.dataset.loadState = "ready";
+      positionCursor();
+    };
+    frame.onerror = () => {
+      frame.dataset.loadState = "error";
+      liveStatus.textContent = "The isolated surface frame could not be decoded.";
+      liveStatus.dataset.state = "error";
+    };
+    if (renderedFrameDataUrl !== snapshot.frame.dataUrl) {
+      frame.dataset.loadState = "loading";
+      renderedFrameDataUrl = snapshot.frame.dataUrl;
+      frame.src = snapshot.frame.dataUrl;
+    }
   } else {
     frame.removeAttribute("src");
+    delete frame.dataset.loadState;
+    renderedFrameDataUrl = null;
     frame.hidden = true;
   }
   cursor.hidden = !session.cursor.visible || session.state !== "ready";

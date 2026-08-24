@@ -224,6 +224,25 @@ export class AgentDisplayManager {
   async captureSwitcher(): Promise<{ image: NativeImage; accessibility: unknown }> {
     const window = await this.openSwitcher(false);
     await wait(800);
+    const frameLoaded = (await window.webContents.executeJavaScript(`new Promise((resolve) => {
+      const deadline = Date.now() + 2500;
+      const inspect = () => {
+        const frame = document.getElementById('display-frame');
+        if (frame?.complete && frame.naturalWidth > 0 && frame.naturalHeight > 0 && frame.dataset.loadState === 'ready') {
+          resolve(true);
+          return;
+        }
+        if (Date.now() >= deadline) {
+          resolve(false);
+          return;
+        }
+        setTimeout(inspect, 25);
+      };
+      inspect();
+    })`)) as boolean;
+    if (!frameLoaded) {
+      throw new Error("Agent Displays proof did not decode the selected offscreen surface frame.");
+    }
     const image = await window.webContents.capturePage();
     const accessibility = await window.webContents.executeJavaScript(`(() => {
       const viewport = document.getElementById('viewport');
@@ -235,6 +254,10 @@ export class AgentDisplayManager {
       controls: [...document.querySelectorAll('button,[role="button"],[role="tab"]')].map((node) => ({text: node.textContent?.trim(), disabled: node.hasAttribute('disabled'), ariaPressed: node.getAttribute('aria-pressed')})),
       sessionOptions: document.querySelectorAll('[role="option"]').length,
       viewport: viewport ? {tabIndex: viewport.tabIndex, ariaLabel: viewport.getAttribute('aria-label')} : null,
+      selectedFrame: (() => {
+        const frame = document.getElementById('display-frame');
+        return frame ? {complete: frame.complete, naturalWidth: frame.naturalWidth, naturalHeight: frame.naturalHeight, loadState: frame.dataset.loadState ?? null} : null;
+      })(),
       keyboardFocusTarget: document.activeElement?.id ?? null,
       controller: document.getElementById('controller-pill')?.textContent?.trim() ?? null,
       liveRegions: [...document.querySelectorAll('[aria-live]')].map((node) => node.textContent?.trim()),

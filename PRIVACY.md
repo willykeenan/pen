@@ -82,6 +82,34 @@ image to its model provider, so the provider's privacy and retention terms
 apply. The snapshot is not written to Agent Display history. Stop clears the
 surface's memory-only browser storage.
 
+## Agent visual references
+
+Agent visual references are a separate agent-only local store. A sender must
+explicitly supply one PNG data URL or name one existing inked Pen annotation,
+one direction, one idempotency key, and one recipient identity. KE Pen does not
+capture a screen for this feature and never reads an arbitrary file path. It
+does not use the clipboard, show a popup, open a window, call a public service,
+or send the reference. Instead it returns one capability envelope for the
+sender to route through the existing governed agent-message channel.
+
+On POSIX systems, `agent-visual-references/` uses `0700` directories and `0600`
+files. Windows stores the same files inside the current user's application-data
+profile and inherits its ACL. Each record contains sender and recipient
+identity, the direction, image dimensions and hash,
+creation/expiry/delivery timestamps, and only a hash of the capability. It does
+not retain the raw capability, idempotency key, original annotation ID, source
+application, desktop path, agent-message content, or a capture history. There
+is no list API. References expire after 15 minutes by default, can never exceed
+60 minutes, become unreadable immediately at expiry, and are removed on an
+expired read or when another reference is created.
+
+Only the exact addressed runtime identity (`KE_PEN_AGENT_ID` or
+`CODEX_THREAD_ID`) plus the routed capability can read the image. This prevents
+accidental cross-task reads inside the protocol; it is not protection from
+malware or another process already running as the same operating-system user.
+The receiving AI host may transmit the returned image to its model provider,
+so that provider's privacy and retention terms still apply.
+
 ## Your AI host
 
 KE Pen itself does not upload the marked crop. Your AI host may send MCP tool

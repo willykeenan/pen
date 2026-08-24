@@ -15,6 +15,29 @@ KE Pen intentionally has a narrow boundary:
 - image reads are confined to KE Pen's data directory and capped at 16 MB;
 - `pen_complete` can change only the current annotation's lifecycle state.
 
+Agent visual references use a separate owner-only local store and a 256-bit
+installation secret. Each reference is bound to one sender, one different
+recipient, one image checksum, one random generation, one expiry, and a
+caller-supplied idempotency key whose raw value is never stored. The routed
+capability is derived with HMAC-SHA-256 and only its digest is persisted.
+Reads require both the capability and an exact current runtime-identity match.
+Wrong recipients and wrong capabilities receive the same bounded denial.
+
+Only explicit PNG data URLs or existing inked Pen annotations are accepted.
+PNG signatures, dimensions, byte limits, optional region bounds, checksums,
+record schemas, UUIDs, and store paths are validated. The feature has no
+capture primitive, file-path input, clipboard API, popup, UI, network client,
+public upload, list/history tool, or direct message transport. Creating a
+reference returns `sent: false`; a separate existing governed agent-message
+action is required to route the one-recipient envelope. Retries deduplicate;
+conflicting reuse of an idempotency key fails closed; expiry deletes the bytes
+and rotates the capability generation so an old envelope cannot revive them.
+
+Agent visual references do not automatically consume or forward Agent Display
+snapshots, owner tokens, renderer state, or human Pen/KE Shot flows. The full
+abuse analysis and residual risks are recorded in
+[`docs/AGENT_VISUAL_REFERENCES_THREAT_MODEL.md`](./docs/AGENT_VISUAL_REFERENCES_THREAT_MODEL.md).
+
 ## Agent Display boundary
 
 Agent Displays are app-hosted offscreen Electron surfaces, not operating-system

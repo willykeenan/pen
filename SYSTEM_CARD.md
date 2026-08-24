@@ -12,8 +12,11 @@ network work, and optionally a link from an endpoint the user owns.
 
 The 0.5.0 source candidate adds **Agent Displays**: one isolated offscreen test
 canvas and visible software cursor per exact agent/task, plus a human switcher
-with exclusive handoff and Stop/revoke. It does not create an operating-system
-monitor or move the native cursor.
+with exclusive handoff and Stop/revoke. It also adds background-only **agent
+visual references**: one explicit PNG or inked Pen crop plus direction, bound
+to one chosen recipient and routed by an existing governed agent-message
+channel. Neither feature creates an operating-system monitor or moves the
+native cursor.
 
 The contribution is the interaction contract, not a new model:
 
@@ -30,8 +33,8 @@ send, deploy, purchase, or take another consequential action.
 
 - One sandboxed Electron tray app and transparent drawing overlay for macOS,
   Windows, and Linux.
-- A local Node.js 20+ stdio MCP server with the three Pen annotation tools and
-  seven bounded Agent Display tools.
+- A local Node.js 20+ stdio MCP server with three Pen annotation tools, seven
+  bounded Agent Display tools, and two bounded agent-reference tools.
 - A platform-native, user-owned annotation directory with a shared schema.
 - KE Shot: the native macOS region picker on darwin, an equivalent overlay
   marquee on Windows and Linux, a clipboard-first delivery path, local PNG
@@ -58,6 +61,12 @@ capabilities, one-controller handoff, Stop/revoke, crash interruption, stale
 expiry, typed-text/URL redaction, loopback and subresource confinement,
 concurrent session independence, local IPC authentication, bounded input, and
 a real 960 × 680 switcher render with keyboard-focus and accessibility facts.
+
+Agent-reference checks add exact sender/recipient isolation, capability denial,
+owner-only file modes, checksum and PNG bounds, source-annotation lifecycle
+preservation, no annotation-ID or idempotency-key persistence, short expiry,
+old-capability non-revival, idempotent retry, conflict rejection, and a real
+two-MCP-runtime sender-to-recipient image-plus-direction receipt.
 
 Those checks establish source and packaged-runtime behavior on the tested
 runners. They do not establish outside-user adoption, every desktop
@@ -94,6 +103,16 @@ storage. The permission panel reports actual Screen Recording and Accessibility
 state while stating that neither is needed by isolated displays. No native
 virtual monitor, multiple hardware cursor, or real-desktop control is claimed.
 
+Agent visual references are separately bounded to one explicit local PNG or
+inked annotation, one recipient, and at most one hour. KE Pen creates a private
+capability envelope but never sends it; the existing governed message channel
+must route it. Recipient identity and capability are both verified, references
+have no list/history surface, and expiry immediately blocks reads before bytes
+are pruned on access or the next create. The protocol provides accidental
+cross-task isolation for same-user agents, not protection from same-user
+malware or the configured AI/model hosts. It does not bridge Agent Displays,
+touch human UI, capture a desktop, use the clipboard, or upload.
+
 ## Current limitations
 
 - macOS 13+ universal, Windows 10/11 x64, and Linux x64 are the release targets.
@@ -102,6 +121,9 @@ virtual monitor, multiple hardware cursor, or real-desktop control is claimed.
 - Node.js 20+ and manual MCP host configuration are required.
 - Agent Displays host web test surfaces only. They do not appear as a display in
   macOS System Settings and cannot host arbitrary native application windows.
+- Agent visual references work only where sender and recipient can reach the
+  same private KE Pen data directory and the message channel preserves the
+  capability envelope. Cross-machine transfer is not implemented.
 - KE Shot ships no endpoint. Uploading requires the user to run their own and
   paste an endpoint and token into a local settings file; changing the KE Shot
   hotkey requires restarting the app. Deleting a shot depends on the user's own

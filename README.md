@@ -15,12 +15,16 @@ The same app also ships **KE Shot**: one hotkey, drag a region, and the image is
 on your clipboard instantly—optionally uploaded to an endpoint you own, so you
 get a shareable link too. See [KE Shot](#ke-shot) below.
 
-The 0.5.0 source candidate adds **Agent Displays**: every exact agent/task can
-claim a separate app-hosted test canvas with its own visible software cursor.
-Those cursors operate concurrently inside separate offscreen browser profiles;
-they never move or replace the computer's single native cursor. William can
-open the Agent Displays switcher, enter one canvas, take exclusive control,
-return it to its agent, or Stop and revoke it.
+The 0.5.0 source candidate adds two agent-only layers. **Agent Displays** let
+every exact agent/task claim a separate app-hosted test canvas with its own
+visible software cursor. Those cursors operate concurrently inside separate
+offscreen browser profiles; they never move or replace the computer's single
+native cursor. William can open the Agent Displays switcher, enter one canvas,
+take exclusive control, return it to its agent, or Stop and revoke it.
+**Agent visual references** let one agent privately point one chosen agent at
+one explicit PNG or inked Pen region plus a short direction. They run entirely
+in the background and add no human button, popup, clipboard action, capture,
+public upload, or history browser.
 
 Created by **William Keenan at [K&E Studios](https://kestudios.dev/?ref=pen)**.
 Free and open source under the MIT license—no paid tier or feature gate.
@@ -211,6 +215,34 @@ appear in System Settings or accept arbitrary native applications. It is the
 strongest bounded implementation KE Pen can provide without installing a
 virtual-display driver or allowing agents to seize the real desktop.
 
+## Agent visual references
+
+An agent calls `pen_agent_reference_create` with exactly one recipient, one
+direction, one idempotency key, and either explicit PNG bytes or the ID of one
+existing inked Pen annotation. KE Pen validates and copies that single image
+into an owner-only local store, caps it at 8 MB and 8192 pixels per edge, and
+returns a short-lived capability envelope. It does **not** send the envelope.
+The sender routes that envelope exactly once through its existing governed
+agent-message channel to the named recipient.
+
+The recipient calls `pen_agent_reference_read`. KE Pen derives the current task
+identity from `KE_PEN_AGENT_ID` or `CODEX_THREAD_ID`, requires an exact match to
+the addressed recipient, verifies the capability and image checksum, and
+returns the PNG plus the sender's direction. Retrying the same idempotency key
+returns the same live reference; changing its image or direction fails closed.
+References expire after 15 minutes by default and may be bounded from 1 to 60
+minutes. An expired reference becomes unreadable immediately; its bytes are
+removed on that read or the next reference creation. A recreated reference
+gets a new capability generation, so an old envelope cannot revive it. There
+is deliberately no list or capture-history tool.
+
+This is a same-computer, same-user agent protocol—not an OS security boundary
+or a cloud transfer service. The configured AI hosts and the existing message
+channel remain separate trust boundaries. A visual reference grants only
+context; it never grants authority to send anything else, edit, deploy, spend,
+capture a screen, or control a desktop. Agent visual references never consume
+or forward an Agent Display snapshot or capability automatically.
+
 ## Connect the MCP server
 
 KE Pen's app and MCP server share a private local annotation directory. The
@@ -251,6 +283,8 @@ the host at `dist/mcp/index.js` with Node.js.
 | `pen_display_snapshot` | Returns an in-memory screenshot of the owned surface for test verification. |
 | `pen_display_heartbeat` | Keeps an authenticated long-running test from expiring. |
 | `pen_display_stop` | Stops and revokes the exact surface and clears its memory-only storage. |
+| `pen_agent_reference_create` | Creates one private, short-lived PNG reference for one chosen recipient; it does not send. |
+| `pen_agent_reference_read` | Returns that PNG and direction only when the runtime identity and capability match. |
 
 The completion handshake is the applied system: visual context informs the AI,
 but it never grants authority to edit, send, spend, deploy, purchase, or take
@@ -288,6 +322,16 @@ is running. The ledger includes agent/task identity, display size, controller,
 cursor coordinates, timestamps, safe action names, and at most the locked
 origin. It does not retain capability tokens, typed text, page content,
 screenshots, URL paths, queries, or fragments.
+
+Agent visual references add `agent-visual-references/`. POSIX systems enforce
+`0700` directories and `0600` records, PNGs, and one local capability secret;
+Windows stores them inside the current user's application-data profile and
+inherits that profile's ACL. Records contain only sender/recipient identity,
+bounded direction, timestamps, hashes, dimensions, and delivery state. Raw
+capabilities, idempotency keys, annotation IDs, source-app details, desktop
+paths, and message history are not persisted. There is no list tool. The
+reference is delivered only when the sender separately uses the existing
+agent-message channel.
 
 ## Build and verify from source
 

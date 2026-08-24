@@ -129,6 +129,11 @@ export class AnnotationStore {
     };
   }
 
+  async context(id: string): Promise<PenContext> {
+    const record = await this.read(id);
+    return { record, image: await this.readImage(record) };
+  }
+
   async complete(options: {
     id?: string | undefined;
     summary?: string | undefined;

@@ -52,7 +52,8 @@ Each surface hosts packaged fixture content or one loopback web application.
 
 Before integration, run the complete typecheck/test/build suite, inspect a real
 960 × 680 switcher render, verify exact content dimensions and no horizontal
-overflow, inspect keyboard-focus/accessibility facts, review stored state for
+overflow, require the selected offscreen frame to decode with nonzero natural
+dimensions, inspect keyboard-focus/accessibility facts, review stored state for
 redaction, and verify the pushed candidate commit matches the remote branch.
 Packaging, installation, TCC changes, and live Activity Monitor integration are
 separate authority and acceptance gates.

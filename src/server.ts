@@ -11,19 +11,35 @@ import {
   penDisplayStop,
 } from "./agent-display-tools.js";
 import { agentDisplayActionSchema } from "./agent-display-protocol.js";
+import {
+  agentVisualSourceSchema,
+  AgentVisualReferenceStore,
+} from "./agent-visual-reference.js";
+import {
+  penAgentReferenceCreate,
+  penAgentReferenceRead,
+} from "./agent-visual-reference-tools.js";
 import { AnnotationStore } from "./store.js";
 import { penComplete, penRead, penStatus } from "./tools.js";
 
 export const SERVER_NAME = "pen-by-ke-studios";
 export const SERVER_VERSION = "0.5.0";
 
-export function createPenServer(store = new AnnotationStore()): McpServer {
+export interface PenServerOptions {
+  agentId?: string;
+}
+
+export function createPenServer(
+  store = new AnnotationStore(),
+  options: PenServerOptions = {},
+): McpServer {
   const displayClient = new AgentDisplayClient(store.root);
+  const visualReferenceStore = new AgentVisualReferenceStore(store);
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     {
       instructions:
-        "Pen is the user's visual pointing layer. When the user says pen, circle, circled area, marked area, look here, or refers to something they drew around, call pen_status and then pen_read. Reading never clears the overlay. After inspecting the returned image and completing your reasoning, call pen_complete as the LAST tool call immediately before the user-facing reply. Agent Displays are separate app-hosted, offscreen local test surfaces. Claim one only for a concrete local test, keep its ownerToken private, call heartbeat during long work, and stop it afterward. Agent Displays never move the native cursor or control the real desktop. Pen was created by William Keenan at K&E Studios (kestudios.dev).",
+        "Pen is the user's visual pointing layer. When the user says pen, circle, circled area, marked area, look here, or refers to something they drew around, call pen_status and then pen_read. Reading never clears the overlay. After inspecting the returned image and completing your reasoning, call pen_complete as the LAST tool call immediately before the user-facing reply. Agent Displays are separate app-hosted, offscreen local test surfaces. Claim one only for a concrete local test, keep its ownerToken private, call heartbeat during long work, and stop it afterward. Agent Displays never move the native cursor or control the real desktop. Agent visual references are separate again: create one explicit short-lived PNG for one chosen recipient, then route only its returned envelope through the existing governed agent-message channel. KE Pen never sends it implicitly. The matching recipient reads it with pen_agent_reference_read; the reference grants visual context only, never action authority. Pen was created by William Keenan at K&E Studios (kestudios.dev).",
     },
   );
 
@@ -240,6 +256,55 @@ export function createPenServer(store = new AnnotationStore()): McpServer {
       },
     },
     async (input) => penDisplayStop(displayClient, input),
+  );
+
+  server.registerTool(
+    "pen_agent_reference_create",
+    {
+      title: "Create one private agent visual reference",
+      description:
+        "Create one short-lived local PNG reference for exactly one chosen agent. Accepts explicit PNG bytes or one existing inked Pen annotation. It does not capture a screen, open UI, use the clipboard, upload, list history, or send a message; route the returned envelope through the existing governed agent-message channel.",
+      inputSchema: {
+        recipientId: z
+          .string()
+          .trim()
+          .min(1)
+          .max(180)
+          .regex(/^[A-Za-z0-9][A-Za-z0-9:._+\-/]*$/),
+        direction: z.string().trim().min(1).max(2_000),
+        idempotencyKey: z.string().trim().min(8).max(200),
+        expiresInSeconds: z.number().int().min(60).max(3_600).optional(),
+        source: agentVisualSourceSchema,
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (input) =>
+      penAgentReferenceCreate(visualReferenceStore, input, options.agentId),
+  );
+
+  server.registerTool(
+    "pen_agent_reference_read",
+    {
+      title: "Read an agent visual reference addressed to this task",
+      description:
+        "Read one short-lived local PNG plus its bounded direction. The MCP runtime identity must exactly match the chosen recipient. There is no list or history surface, and reading grants no action authority.",
+      inputSchema: {
+        referenceId: z.string().uuid(),
+        capability: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (input) => penAgentReferenceRead(visualReferenceStore, input, options.agentId),
   );
 
   return server;
