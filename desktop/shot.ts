@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { clipboard, nativeImage, Notification, shell, type NativeImage } from "electron";
+import { app, clipboard, nativeImage, Notification, shell, type NativeImage } from "electron";
 import type { SettingsStore, ShotHistoryStore, ShotSettings } from "./settings.js";
 import {
   buildUploadHeaders,
@@ -10,6 +10,7 @@ import {
   nextAvailableName,
   parseErrorEnvelope,
   parseShotResponse,
+  planShotNotificationPresentation,
   planUploadRetry,
   readPngDimensions,
   shotDeleteUrl,
@@ -511,6 +512,12 @@ function notify(title: string, body: string, url?: string): void {
   if (!Notification.isSupported()) return;
   const notification = new Notification({ title, body });
   if (url) notification.on("click", () => void shell.openExternal(url));
+  const presentation = planShotNotificationPresentation(process.platform, Boolean(url));
+  if (presentation.hideApp) {
+    app.hide();
+    setTimeout(() => notification.show(), presentation.delayMs);
+    return;
+  }
   notification.show();
 }
 
