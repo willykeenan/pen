@@ -15,6 +15,13 @@ The same app also ships **KE Shot**: one hotkey, drag a region, and the image is
 on your clipboard instantly—optionally uploaded to an endpoint you own, so you
 get a shareable link too. See [KE Shot](#ke-shot) below.
 
+The 0.5.0 source candidate adds **Agent Displays**: every exact agent/task can
+claim a separate app-hosted test canvas with its own visible software cursor.
+Those cursors operate concurrently inside separate offscreen browser profiles;
+they never move or replace the computer's single native cursor. William can
+open the Agent Displays switcher, enter one canvas, take exclusive control,
+return it to its agent, or Stop and revoke it.
+
 Created by **William Keenan at [K&E Studios](https://kestudios.dev/?ref=pen)**.
 Free and open source under the MIT license—no paid tier or feature gate.
 
@@ -177,6 +184,43 @@ macOS asks for Screen Recording permission. Linux uses the desktop capture
 portal when required. KE Pen defaults to XWayland inside a Wayland session
 because native Wayland prevents reliable global overlay positioning; advanced
 users can set `KE_PEN_NATIVE_WAYLAND=1`, with compositor-dependent behavior.
+Agent Displays do not capture the desktop and do not inject system input, so
+their isolated canvases require neither Screen Recording nor Accessibility.
+
+## Agent Displays
+
+Agent Displays solve the one-hardware-cursor limitation with a software
+compositor inside KE Pen. Each claim is bound to an exact `agentId` and
+`taskId`, receives one unguessable session capability, and owns one independent
+offscreen browser profile and cursor. A 1440 × 900 canvas is the default; sizes
+from 640 × 480 through 2560 × 1600 are supported.
+
+The surface may load KE Pen's packaged fixture or one `localhost`, `127.0.0.1`,
+or `[::1]` HTTP/HTTPS origin. The first target locks the session to that origin.
+Public URLs, embedded URL credentials, cross-origin subresources, popups,
+downloads, redirects to another origin, and browser permissions are refused.
+Storage is memory-only and is cleared when the renderer stops.
+
+Open **Agent Displays…** from the KE Pen tray menu to switch between surfaces.
+Only one controller exists per surface:
+
+- while the agent has control, William's switcher is view-only;
+- **Take control** atomically pauses agent input and routes switcher keyboard,
+  pointer, and scroll events only to that offscreen canvas;
+- **Return to agent** restores agent input; and
+- **Stop** revokes the capability, destroys the renderer, and clears its
+  memory-only browser storage.
+
+Ready sessions expire after 30 minutes without authenticated activity. If KE
+Pen or a renderer crashes, the persisted redacted record becomes
+`interrupted`; the exact agent/task may recover the same session identity with
+a newly rotated capability. Stopped and expired records are removed after 24
+hours.
+
+This is deliberately not advertised as a macOS virtual monitor. It does not
+appear in System Settings or accept arbitrary native applications. It is the
+strongest bounded implementation KE Pen can provide without installing a
+virtual-display driver or allowing agents to seize the real desktop.
 
 ## Connect the MCP server
 
@@ -212,6 +256,13 @@ the host at `dist/mcp/index.js` with Node.js.
 | `pen_status` | Reports whether ink is waiting without reading screen content. |
 | `pen_read` | Returns the current cropped PNG plus bounded metadata; ink stays visible. |
 | `pen_complete` | Records understanding and schedules the overlay to fade just before the AI reply. |
+| `pen_display_claim` | Claims one isolated app-hosted display and software cursor for an exact agent/task. |
+| `pen_display_status` | Returns redacted session, controller, cursor, boundary, and permission truth. |
+| `pen_display_navigate` | Loads one locked loopback test origin; public/cross-origin navigation is refused. |
+| `pen_display_act` | Sends bounded pointer, keyboard, typing, or scroll input only to the owned surface. |
+| `pen_display_snapshot` | Returns an in-memory screenshot of the owned surface for test verification. |
+| `pen_display_heartbeat` | Keeps an authenticated long-running test from expiring. |
+| `pen_display_stop` | Stops and revokes the exact surface and clears its memory-only storage. |
 
 The completion handshake is the applied system: visual context informs the AI,
 but it never grants authority to edit, send, spend, deploy, purchase, or take
@@ -219,12 +270,17 @@ another consequential action.
 
 ## Local data
 
-KE Pen has no account, telemetry, ads, or listening network port. Through 0.3.0
-it made no outbound network calls at all. As of 0.4.0 there are exactly two,
+KE Pen has no account, telemetry, ads, or listening TCP/network port. The
+desktop app exposes an owner-only local IPC socket for Agent Display commands;
+it is not reachable over LAN or the internet. Through 0.3.0
+it made no outbound network calls at all. As of 0.4.0 there are exactly two
+internet-egress operations,
 both to the endpoint you configured yourself and both started by you: KE Shot
 uploading a capture at the moment you take a shot, and the delete you ask for
 from **Recent shots**. No endpoint or no token means no request is ever made.
-Nothing else in the app phones anywhere.
+Agent Displays may load only a loopback test server on the same computer and
+block public and cross-origin requests. Nothing else in the app phones
+anywhere.
 
 It stores the marked crop and lifecycle record locally:
 
@@ -237,6 +293,13 @@ It stores the marked crop and lifecycle record locally:
 Set `KE_PEN_HOME` to override the location. The configured AI host may transmit
 the returned crop to its model provider, so that provider's privacy terms still
 apply. See [PRIVACY.md](./PRIVACY.md) and [SECURITY.md](./SECURITY.md).
+
+Agent Displays add `agent-displays/sessions.json`, a `0600` redacted lifecycle
+ledger, plus an ephemeral `0600` broker-auth file and local socket while KE Pen
+is running. The ledger includes agent/task identity, display size, controller,
+cursor coordinates, timestamps, safe action names, and at most the locked
+origin. It does not retain capability tokens, typed text, page content,
+screenshots, URL paths, queries, or fragments.
 
 ## Build and verify from source
 

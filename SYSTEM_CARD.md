@@ -10,6 +10,11 @@ Version 0.4.0 adds **KE Shot**, a capture-and-share mode in the same app: one
 hotkey, one dragged region, the image on the clipboard before any disk or
 network work, and optionally a link from an endpoint the user owns.
 
+The 0.5.0 source candidate adds **Agent Displays**: one isolated offscreen test
+canvas and visible software cursor per exact agent/task, plus a human switcher
+with exclusive handoff and Stop/revoke. It does not create an operating-system
+monitor or move the native cursor.
+
 The contribution is the interaction contract, not a new model:
 
 1. the person marks the live interface;
@@ -25,13 +30,14 @@ send, deploy, purchase, or take another consequential action.
 
 - One sandboxed Electron tray app and transparent drawing overlay for macOS,
   Windows, and Linux.
-- A local Node.js 20+ stdio MCP server with exactly `pen_status`, `pen_read`,
-  and `pen_complete`.
+- A local Node.js 20+ stdio MCP server with the three Pen annotation tools and
+  seven bounded Agent Display tools.
 - A platform-native, user-owned annotation directory with a shared schema.
 - KE Shot: the native macOS region picker on darwin, an equivalent overlay
   marquee on Windows and Linux, a clipboard-first delivery path, local PNG
   copies, and a bounded 25-entry link history.
-- No cloud backend, account, telemetry, ads, remote code, or listening port.
+- No cloud backend, account, telemetry, ads, remote code, or TCP/network listener.
+- A same-user local IPC broker for Agent Displays; it opens no TCP/network port.
 
 ## Evidence contract
 
@@ -46,6 +52,12 @@ mapping, refusal of cleartext endpoints, and rejection of malformed or hostile
 endpoint responses. The CI matrix builds on macOS, Windows, and Linux;
 each packaging lane boots the packaged executable before publishing its
 artifact and SHA-256 manifest.
+
+Agent Display checks add exact-identity uniqueness, unpersisted and rotated
+capabilities, one-controller handoff, Stop/revoke, crash interruption, stale
+expiry, typed-text/URL redaction, loopback and subresource confinement,
+concurrent session independence, local IPC authentication, bounded input, and
+a real 960 × 680 switcher render with keyboard-focus and accessibility facts.
 
 Those checks establish source and packaged-runtime behavior on the tested
 runners. They do not establish outside-user adoption, every desktop
@@ -74,12 +86,22 @@ parse as `https` URLs before the app will open or copy them.
 Uploading is publishing, and deletion at the endpoint cannot recall bytes a chat
 app or CDN already fetched.
 
+Agent Displays are separately bounded to packaged fixtures and loopback. Each
+renderer has a memory-only partition; public/cross-origin requests, permissions,
+downloads, and popups are denied. Per-session capabilities are hashed at rest,
+human control blocks agent input, and Stop destroys the renderer and clears its
+storage. The permission panel reports actual Screen Recording and Accessibility
+state while stating that neither is needed by isolated displays. No native
+virtual monitor, multiple hardware cursor, or real-desktop control is claimed.
+
 ## Current limitations
 
 - macOS 13+ universal, Windows 10/11 x64, and Linux x64 are the release targets.
 - Linux overlay reliability requires X11 or XWayland; native Wayland remains
   compositor-dependent.
 - Node.js 20+ and manual MCP host configuration are required.
+- Agent Displays host web test surfaces only. They do not appear as a display in
+  macOS System Settings and cannot host arbitrary native application windows.
 - KE Shot ships no endpoint. Uploading requires the user to run their own and
   paste an endpoint and token into a local settings file; changing the KE Shot
   hotkey requires restarting the app. Deleting a shot depends on the user's own
