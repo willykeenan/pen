@@ -22,6 +22,7 @@ import {
   normalizeHistory,
   parseErrorEnvelope,
   parseShotResponse,
+  planShotNotificationPresentation,
   planUploadRetry,
   readPngDimensions,
   shotDeleteUrl,
@@ -229,6 +230,25 @@ test("uploads retry on network, 429, and 5xx failures and never on other 4xx", (
   assert.equal(planUploadRetry(1, 401).retry, false);
   assert.equal(planUploadRetry(1, 413).retry, false);
   assert.equal(planUploadRetry(1, 415).retry, false);
+});
+
+test("a macOS link notification leaves the foreground before its banner is posted", () => {
+  assert.deepEqual(planShotNotificationPresentation("darwin", true), {
+    hideApp: true,
+    delayMs: 150,
+  });
+  assert.deepEqual(planShotNotificationPresentation("darwin", false), {
+    hideApp: false,
+    delayMs: 0,
+  });
+  assert.deepEqual(planShotNotificationPresentation("win32", true), {
+    hideApp: false,
+    delayMs: 0,
+  });
+  assert.deepEqual(planShotNotificationPresentation("linux", true), {
+    hideApp: false,
+    delayMs: 0,
+  });
 });
 
 test("a permanent endpoint misconfiguration is never retried, whatever its status", () => {
