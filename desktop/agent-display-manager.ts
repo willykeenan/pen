@@ -61,21 +61,21 @@ export class AgentDisplayManager {
     switch (request.method) {
       case "claim": {
         const claimed = await this.registry.claim(request.params);
-        await this.createSurface(claimed.session);
-        if (request.params.targetUrl) {
-          try {
+        try {
+          await this.createSurface(claimed.session);
+          if (request.params.targetUrl) {
             await this.navigate(
               claimed.session.sessionId,
               claimed.ownerToken,
               request.params.targetUrl,
             );
-          } catch (error) {
-            await this.stopSurface(
-              claimed.session.sessionId,
-              "Initial target failed the isolated-display navigation gate.",
-            );
-            throw error;
           }
+        } catch (error) {
+          await this.stopSurface(
+            claimed.session.sessionId,
+            "The isolated renderer or its initial target failed to start.",
+          );
+          throw error;
         }
         return {
           ...claimed,
@@ -290,6 +290,7 @@ export class AgentDisplayManager {
   }
 
   private async humanAct(sessionId: string, action: AgentDisplayAction): Promise<unknown> {
+    this.registry.requireHuman(sessionId);
     await this.dispatchInput(sessionId, action);
     return { session: await this.registry.recordHumanAction(sessionId, action) };
   }
@@ -297,6 +298,9 @@ export class AgentDisplayManager {
   private async snapshot(sessionId: string, token: string): Promise<unknown> {
     this.registry.requireAgent(sessionId, token);
     const image = await this.captureSurface(sessionId, true);
+    // A human handoff may occur while Chromium produces a fresh frame. Never
+    // return a frame captured after the agent lost control.
+    this.registry.requireAgent(sessionId, token);
     const png = image.toPNG();
     if (png.byteLength <= MAX_SNAPSHOT_BYTES) {
       return {

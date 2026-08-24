@@ -193,7 +193,9 @@ Agent Displays solve the one-hardware-cursor limitation with a software
 compositor inside KE Pen. Each claim is bound to an exact `agentId` and
 `taskId`, receives one unguessable session capability, and owns one independent
 offscreen browser profile and cursor. A 1440 × 900 canvas is the default; sizes
-from 640 × 480 through 2560 × 1600 are supported.
+from 640 × 480 through 2560 × 1600 are supported. KE Pen permits up to 32 live
+surfaces at once, then fails closed until an inactive surface is stopped; this
+keeps a faulty or hostile agent from exhausting the Mac with renderers.
 
 The surface may load KE Pen's packaged fixture or one `localhost`, `127.0.0.1`,
 or `[::1]` HTTP/HTTPS origin. The first target locks the session to that origin.
@@ -211,7 +213,7 @@ Only one controller exists per surface:
 - **Stop** revokes the capability, destroys the renderer, and clears its
   memory-only browser storage.
 
-Ready sessions expire after 30 minutes without authenticated activity. If KE
+Ready and interrupted sessions expire after 30 minutes without authenticated activity. If KE
 Pen or a renderer crashes, the persisted redacted record becomes
 `interrupted`; the exact agent/task may recover the same session identity with
 a newly rotated capability. Stopped and expired records are removed after 24

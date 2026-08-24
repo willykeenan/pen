@@ -30,6 +30,8 @@ rejects agent actions; Stop revokes both controllers, destroys the renderer,
 and clears partition storage. Ready sessions expire after 30 minutes without
 authenticated activity. App restart and renderer failure mark sessions
 interrupted and require exact-identity recovery with a rotated capability.
+The broker caps live offscreen renderers at 32 and refuses further claims until
+one is stopped.
 
 Packaged fixtures and one locked loopback HTTP/HTTPS origin are the only
 navigation targets. The request gate also covers scripts, images, fetches,

@@ -36,6 +36,7 @@ Each surface hosts packaged fixture content or one loopback web application.
 | Misleading TCC claims | The switcher reports macOS Screen Recording and Accessibility truth without prompting. It states both are unnecessary for isolated displays and that real-desktop control is not implemented. | Normal KE Pen annotation capture separately needs Screen Recording. Permission status alone does not prove user acceptance. |
 | Snapshot overcollection | Snapshot requires the session capability, captures only that offscreen surface, is capped at 16 MB, and is returned in memory without Agent Display history. | The AI host/provider may retain the returned image under its own terms. |
 | Local broker exposure | Unix socket/named pipe and auth file are local; Unix artifacts are `0600`, the state directory is `0700`, the socket uses a short hashed temporary path to respect macOS path limits, every request carries a random broker secret, and request/response sizes and time are bounded. No TCP listener is created. | Windows named-pipe ACL behavior depends on Electron/Node and the logged-in user context; packaging review should verify ACLs on Windows before a public claim of parity. |
+| Renderer resource exhaustion | New claims fail closed after 32 simultaneous ready surfaces; inactivity expiry and Stop release surfaces. | Thirty-two maximum-size Chromium surfaces can still use substantial memory; operators should Stop finished displays and lower the ceiling in a future host-policy layer if measured pressure requires it. |
 
 ## Explicit non-goals
 

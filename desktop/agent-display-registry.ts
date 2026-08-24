@@ -10,6 +10,7 @@ import type {
 } from "../src/agent-display-protocol.js";
 
 const palette = ["#ff6b4a", "#66d9ff", "#9b8cff", "#74d99f", "#ffd166", "#ff7eb6"];
+export const MAX_ACTIVE_AGENT_DISPLAYS = 32;
 const storedSessionSchema = z.object({
   sessionId: z.string().uuid(),
   agentId: z.string().min(1).max(180),
@@ -103,6 +104,15 @@ export class AgentDisplayRegistry {
         "This exact agent and task already owns an active display. Stop it or use its existing token.",
       );
     }
+    if (
+      [...this.sessions.values()].filter((session) => session.state === "ready").length >=
+        MAX_ACTIVE_AGENT_DISPLAYS
+    ) {
+      throw new AgentDisplayError(
+        "DISPLAY_CAPACITY_REACHED",
+        `KE Pen allows at most ${MAX_ACTIVE_AGENT_DISPLAYS} simultaneous offscreen displays so agents cannot exhaust the host. Stop an inactive display and retry.`,
+      );
+    }
 
     const token = randomBytes(32).toString("base64url");
     const now = this.isoNow();
@@ -156,6 +166,16 @@ export class AgentDisplayRegistry {
       );
     }
     return session;
+  }
+
+  requireHuman(sessionId: string): void {
+    const session = this.requireReady(sessionId);
+    if (session.controller !== "human") {
+      throw new AgentDisplayError(
+        "HUMAN_DOES_NOT_HAVE_CONTROL",
+        "Take control of this display before sending human input.",
+      );
+    }
   }
 
   async recordAction(sessionId: string, token: string, action: AgentDisplayAction): Promise<AgentDisplaySessionView> {
@@ -278,7 +298,10 @@ export class AgentDisplayRegistry {
     const expired: string[] = [];
     for (const session of this.sessions.values()) {
       const lastSeen = new Date(session.lastSeenAt).getTime();
-      if (session.state === "ready" && now - lastSeen > idleMs) {
+      if (
+        (session.state === "ready" || session.state === "interrupted") &&
+        now - lastSeen > idleMs
+      ) {
         session.state = "expired";
         session.controller = "none";
         session.cursor.visible = false;
