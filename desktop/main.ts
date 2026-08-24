@@ -244,6 +244,7 @@ async function runAgentDisplayProof(): Promise<void> {
           threeIndependentSessionsVisible: true,
           humanControllerVisible: true,
           keyboardFocusInsideSelectedSurface: true,
+          selectedSurfaceFrameLoaded: true,
           noHorizontalOverflow: true,
           noRendererError: true,
         },
@@ -272,6 +273,7 @@ function validateAgentDisplayProof(proof: { image: NativeImage; accessibility: u
   const facts = proof.accessibility as Record<string, unknown>;
   const overflow = facts.overflow as Record<string, unknown> | undefined;
   const viewport = facts.viewport as Record<string, unknown> | undefined;
+  const selectedFrame = facts.selectedFrame as Record<string, unknown> | undefined;
   const liveRegions = Array.isArray(facts.liveRegions) ? facts.liveRegions : [];
   if (facts.sessionOptions !== 3) throw new Error("Agent Displays proof did not show all three sessions.");
   if (facts.controller !== "YOU HAVE CONTROL") {
@@ -279,6 +281,16 @@ function validateAgentDisplayProof(proof: { image: NativeImage; accessibility: u
   }
   if (facts.keyboardFocusTarget !== "viewport" || viewport?.tabIndex !== 0) {
     throw new Error("Agent Displays proof did not expose a keyboard-focusable selected surface.");
+  }
+  if (
+    selectedFrame?.complete !== true ||
+    selectedFrame.loadState !== "ready" ||
+    typeof selectedFrame.naturalWidth !== "number" ||
+    selectedFrame.naturalWidth <= 0 ||
+    typeof selectedFrame.naturalHeight !== "number" ||
+    selectedFrame.naturalHeight <= 0
+  ) {
+    throw new Error("Agent Displays proof exposed a missing or broken selected surface frame.");
   }
   if (
     typeof overflow?.width !== "number" ||

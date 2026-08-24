@@ -20,6 +20,8 @@ try {
   assert.deepEqual(
     listed.tools.map((tool) => tool.name).sort(),
     [
+      "pen_agent_reference_create",
+      "pen_agent_reference_read",
       "pen_complete",
       "pen_display_act",
       "pen_display_claim",
@@ -35,7 +37,7 @@ try {
   const status = await client.callTool({ name: "pen_status", arguments: {} });
   assert.equal(status.isError, undefined);
   assert.match(JSON.stringify(status.content), /Pen by KE Studios/);
-  process.stdout.write(`PEN_BUNDLED_MCP_OK tools=10 server=${serverPath}\n`);
+  process.stdout.write(`PEN_BUNDLED_MCP_OK tools=12 server=${serverPath}\n`);
 } finally {
   await client.close();
 }
