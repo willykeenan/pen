@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { AgentDisplayBroker } from "../desktop/agent-display-broker.js";
-import { AgentDisplayError, AgentDisplayRegistry } from "../desktop/agent-display-registry.js";
+import {
+  AgentDisplayError,
+  AgentDisplayRegistry,
+  MAX_ACTIVE_AGENT_DISPLAYS,
+} from "../desktop/agent-display-registry.js";
 import { AgentDisplayClient } from "../src/agent-display-client.js";
 import {
   agentDisplayResourceAllowed,
@@ -132,6 +136,7 @@ test("human handoff pauses the agent, return restores it, and Stop revokes the s
     height: 900,
   });
   await fixture.registry.takeHumanControl(claimed.session.sessionId);
+  assert.doesNotThrow(() => fixture.registry.requireHuman(claimed.session.sessionId));
   assert.throws(
     () => fixture.registry.requireAgent(claimed.session.sessionId, claimed.ownerToken),
     (error: unknown) => error instanceof AgentDisplayError && error.code === "HUMAN_HAS_CONTROL",
@@ -144,6 +149,11 @@ test("human handoff pauses the agent, return restores it, and Stop revokes the s
   });
   assert.equal(human.lastAction, "human_clicked");
   await fixture.registry.returnAgentControl(claimed.session.sessionId);
+  assert.throws(
+    () => fixture.registry.requireHuman(claimed.session.sessionId),
+    (error: unknown) =>
+      error instanceof AgentDisplayError && error.code === "HUMAN_DOES_NOT_HAVE_CONTROL",
+  );
   assert.doesNotThrow(() => fixture.registry.requireAgent(claimed.session.sessionId, claimed.ownerToken));
   const stopped = await fixture.registry.stop(claimed.session.sessionId, {
     token: claimed.ownerToken,
@@ -223,6 +233,41 @@ test("stale authenticated sessions expire and cannot keep a controller", async (
   assert.deepEqual(await registry.cleanupStale(), [claimed.session.sessionId]);
   assert.equal(registry.list()[0]?.state, "expired");
   assert.equal(registry.list()[0]?.controller, "none");
+});
+
+test("interrupted sessions expire and active renderer capacity is bounded", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ke-pen-display-capacity-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let clock = new Date("2026-08-24T22:00:00.000Z");
+  const registry = new AgentDisplayRegistry(join(root, "sessions.json"), () => clock);
+  await registry.loadAndInterrupt();
+  for (let index = 0; index < MAX_ACTIVE_AGENT_DISPLAYS; index += 1) {
+    await registry.claim({
+      agentId: `codex:capacity-${index}`,
+      taskId: `task-${index}`,
+      label: `Capacity ${index}`,
+      width: 640,
+      height: 480,
+    });
+  }
+  await assert.rejects(
+    () =>
+      registry.claim({
+        agentId: "codex:capacity-overflow",
+        taskId: "task-overflow",
+        label: "Capacity overflow",
+        width: 640,
+        height: 480,
+      }),
+    (error: unknown) =>
+      error instanceof AgentDisplayError && error.code === "DISPLAY_CAPACITY_REACHED",
+  );
+  const restarted = new AgentDisplayRegistry(join(root, "sessions.json"), () => clock);
+  await restarted.loadAndInterrupt();
+  assert.equal(restarted.list().filter((session) => session.state === "interrupted").length, 32);
+  clock = new Date("2026-08-24T22:31:00.000Z");
+  assert.equal((await restarted.cleanupStale()).length, 32);
+  assert.equal(restarted.list().filter((session) => session.state === "expired").length, 32);
 });
 
 test("the local broker authenticates same-user MCP traffic without opening TCP", async (t) => {
