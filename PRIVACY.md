@@ -60,6 +60,28 @@ KE Shot also writes a PNG of each capture to `localCopyDir`
 (`Pictures/KE Shot` by default) while **Save a local copy** is enabled, and
 always writes one when an upload fails so a capture is never lost.
 
+## Agent Displays
+
+Agent Displays use separate memory-only browser profiles. They accept only a
+packaged fixture or one locked loopback origin on the same computer; public and
+cross-origin requests are blocked. KE Pen does not capture the real desktop for
+this feature and does not store the displayed page.
+
+`agent-displays/sessions.json` is an owner-only redacted lifecycle ledger. It
+stores exact agent/task identity, session ID, dimensions, controller, software
+cursor coordinates/color, timestamps, safe action categories, state, stop
+reason, a capability hash, and at most the target origin. It never stores the
+raw capability, typed text, page content, screenshots, URL path, query, or
+fragment. Broker credentials and the local IPC socket exist only while the app
+is running and are owner-only. Stopped or expired ledger entries are removed
+after 24 hours.
+
+When an agent asks for `pen_display_snapshot`, KE Pen returns the offscreen
+surface image in memory to the configured AI host. That host may transmit the
+image to its model provider, so the provider's privacy and retention terms
+apply. The snapshot is not written to Agent Display history. Stop clears the
+surface's memory-only browser storage.
+
 ## Your AI host
 
 KE Pen itself does not upload the marked crop. Your AI host may send MCP tool

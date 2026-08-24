@@ -19,9 +19,13 @@ import {
   type NativeImage,
 } from "electron";
 import { createHash, randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { agentDisplayRuntimePaths } from "../src/agent-display-protocol.js";
 import { AnnotationStore } from "../src/store.js";
 import type { AnnotationRecord } from "../src/types.js";
+import { AgentDisplayBroker } from "./agent-display-broker.js";
+import { AgentDisplayManager } from "./agent-display-manager.js";
 import { cancelActiveRegionCapture, captureRegion } from "./capture.js";
 import { SettingsStore, ShotHistoryStore, type ShotSettings } from "./settings.js";
 import { createShotRuntime, type ShotRuntime } from "./shot.js";
@@ -58,6 +62,10 @@ interface AnnotationPayload {
 
 const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
 const IS_SMOKE_TEST = process.argv.includes("--smoke-test");
+const AGENT_DISPLAY_PROOF = process.argv
+  .find((argument) => argument.startsWith("--agent-display-proof="))
+  ?.slice("--agent-display-proof=".length);
+const IS_AGENT_DISPLAY_PROOF = Boolean(AGENT_DISPLAY_PROOF);
 const ACTIVATE_ON_START = process.argv.includes("--activate-on-start");
 const SHORTCUT = process.platform === "darwin" ? "Control+Alt+Command+P" : "Control+Alt+P";
 const SHORTCUT_LABEL = process.platform === "darwin" ? "⌃⌥⌘P" : "Ctrl+Alt+P";
@@ -68,6 +76,9 @@ const COPY_MODE_LABELS: Record<CopyMode, string> = {
 };
 
 app.setName("KE Pen");
+if (IS_AGENT_DISPLAY_PROOF && process.platform === "darwin") {
+  app.setActivationPolicy("accessory");
+}
 if (process.platform === "linux") {
   app.commandLine.appendSwitch("enable-features", "GlobalShortcutsPortal");
   if (
@@ -79,7 +90,7 @@ if (process.platform === "linux") {
 }
 app.enableSandbox();
 
-if (!IS_SMOKE_TEST && !app.requestSingleInstanceLock()) {
+if (!IS_SMOKE_TEST && !IS_AGENT_DISPLAY_PROOF && !app.requestSingleInstanceLock()) {
   app.quit();
 }
 
@@ -99,6 +110,9 @@ let pendingShotRegion: ((region: Buffer | null) => void) | null = null;
 let shot: ShotRuntime | null = null;
 let shotShortcutLabel = "";
 let dockCaptureArmed = false;
+let agentDisplays: AgentDisplayManager | null = null;
+let agentDisplayBroker: AgentDisplayBroker | null = null;
+let agentDisplayStartupError: string | null = null;
 
 if (IS_SMOKE_TEST) {
   void app.whenReady().then(() => {
@@ -132,27 +146,144 @@ if (IS_SMOKE_TEST) {
     cancelActiveRegionCapture();
     finishShotOverlay(null);
     closeOverlays();
+    void agentDisplayBroker?.stop();
+    void agentDisplays?.shutdown();
   });
   app.on("will-quit", () => globalShortcut.unregisterAll());
 
-  void app.whenReady().then(async () => {
-    // Hidden until the real preference is known: reading settings takes two
-    // file reads, and the icon must not flash for anyone who turned it off.
-    if (process.platform === "darwin") app.dock?.hide();
-    await store.cancelOrphanedCurrent();
-    // KE Shot is additive: if its local state cannot be prepared, KE Pen still
-    // has to come up exactly as it did before.
-    await createShot().catch(() => undefined);
-    applyDockVisibility();
-    createTray();
-    const penRegistered = globalShortcut.register(SHORTCUT, () => void togglePen());
-    const shotRegistered = registerShotShortcut();
-    applyTrayTooltip(penRegistered, shotRegistered);
-    setTimeout(() => {
-      dockCaptureArmed = true;
-    }, 1_500);
-    if (ACTIVATE_ON_START) await activatePen();
-  });
+  void app
+    .whenReady()
+    .then(async () => {
+      if (IS_AGENT_DISPLAY_PROOF && process.platform === "darwin") app.dock?.hide();
+      await createAgentDisplayRuntime();
+      if (IS_AGENT_DISPLAY_PROOF) {
+        await runAgentDisplayProof();
+        return;
+      }
+      // Hidden until the real preference is known: reading settings takes two
+      // file reads, and the icon must not flash for anyone who turned it off.
+      if (process.platform === "darwin") app.dock?.hide();
+      await store.cancelOrphanedCurrent();
+      // KE Shot is additive: if its local state cannot be prepared, KE Pen still
+      // has to come up exactly as it did before.
+      await createShot().catch(() => undefined);
+      applyDockVisibility();
+      createTray();
+      const penRegistered = globalShortcut.register(SHORTCUT, () => void togglePen());
+      const shotRegistered = registerShotShortcut();
+      applyTrayTooltip(penRegistered, shotRegistered);
+      setTimeout(() => {
+        dockCaptureArmed = true;
+      }, 1_500);
+      if (ACTIVATE_ON_START) await activatePen();
+    })
+    .catch((error: unknown) => {
+      process.stderr.write(
+        `${error instanceof Error ? error.stack ?? error.message : "KE Pen failed during startup."}\n`,
+      );
+      app.exit(1);
+    });
+}
+
+async function createAgentDisplayRuntime(): Promise<void> {
+  let manager: AgentDisplayManager | null = null;
+  let broker: AgentDisplayBroker | null = null;
+  try {
+    const paths = agentDisplayRuntimePaths(store.root);
+    manager = new AgentDisplayManager(paths.stateFile);
+    await manager.initialize();
+    broker = new AgentDisplayBroker(paths, (request) => manager!.handleBrokerRequest(request));
+    await broker.start();
+    agentDisplays = manager;
+    agentDisplayBroker = broker;
+    agentDisplayStartupError = null;
+  } catch (error) {
+    await broker?.stop().catch(() => undefined);
+    await manager?.shutdown().catch(() => undefined);
+    agentDisplayStartupError =
+      error instanceof Error ? error.message : "The local Agent Displays broker could not start.";
+    if (IS_AGENT_DISPLAY_PROOF) throw error;
+  }
+}
+
+async function runAgentDisplayProof(): Promise<void> {
+  const manager = agentDisplays;
+  if (!manager || !AGENT_DISPLAY_PROOF) {
+    throw new Error("Agent Displays proof mode could not initialize its isolated runtime.");
+  }
+  const output = path.resolve(AGENT_DISPLAY_PROOF);
+  if (!output.endsWith(".png")) throw new Error("Agent Displays proof output must be a PNG path.");
+  const multiAgentIsolation = await manager.seedProofFixtures();
+  const proof = await manager.captureSwitcher();
+  validateAgentDisplayProof(proof);
+  const imageSize = proof.image.getSize();
+  await mkdir(path.dirname(output), { recursive: true, mode: 0o700 });
+  await writeFile(output, proof.image.toPNG(), { mode: 0o600 });
+  const receipt = output.replace(/\.png$/i, ".json");
+  await writeFile(
+    receipt,
+    `${JSON.stringify(
+      {
+        schema: "dev.kestudios.pen.agent-display.render-proof.v1",
+        createdAt: new Date().toISOString(),
+        viewport: imageSize,
+        appHostedOffscreenDisplay: true,
+        nativeMacOSVirtualMonitor: false,
+        nativeSystemCursor: false,
+        realDesktopInput: false,
+        headlessRender: true,
+        foregroundWindowShown: false,
+        assertions: {
+          exact960x680: true,
+          threeIndependentSessionsVisible: true,
+          humanControllerVisible: true,
+          keyboardFocusInsideSelectedSurface: true,
+          noHorizontalOverflow: true,
+          noRendererError: true,
+        },
+        multiAgentIsolation,
+        accessibility: proof.accessibility,
+      },
+      null,
+      2,
+    )}\n`,
+    { mode: 0o600 },
+  );
+  process.stdout.write(`${JSON.stringify({ ok: true, screenshot: output, receipt })}\n`);
+  await agentDisplayBroker?.stop();
+  await manager.shutdown();
+  app.exit(0);
+}
+
+function validateAgentDisplayProof(proof: { image: NativeImage; accessibility: unknown }): void {
+  const size = proof.image.getSize();
+  if (size.width !== 960 || size.height !== 680) {
+    throw new Error(`Agent Displays proof rendered ${size.width}x${size.height}, not 960x680.`);
+  }
+  if (!proof.accessibility || typeof proof.accessibility !== "object") {
+    throw new Error("Agent Displays proof returned no accessibility facts.");
+  }
+  const facts = proof.accessibility as Record<string, unknown>;
+  const overflow = facts.overflow as Record<string, unknown> | undefined;
+  const viewport = facts.viewport as Record<string, unknown> | undefined;
+  const liveRegions = Array.isArray(facts.liveRegions) ? facts.liveRegions : [];
+  if (facts.sessionOptions !== 3) throw new Error("Agent Displays proof did not show all three sessions.");
+  if (facts.controller !== "YOU HAVE CONTROL") {
+    throw new Error("Agent Displays proof did not expose the exclusive human handoff state.");
+  }
+  if (facts.keyboardFocusTarget !== "viewport" || viewport?.tabIndex !== 0) {
+    throw new Error("Agent Displays proof did not expose a keyboard-focusable selected surface.");
+  }
+  if (
+    typeof overflow?.width !== "number" ||
+    typeof overflow.viewport !== "number" ||
+    overflow.width > overflow.viewport
+  ) {
+    throw new Error("Agent Displays proof has horizontal overflow.");
+  }
+  if (liveRegions.some((value) => typeof value === "string" && /error/i.test(value))) {
+    throw new Error("Agent Displays proof exposed a renderer error.");
+  }
 }
 
 async function createShot(): Promise<void> {
@@ -839,6 +970,21 @@ function shotEntryLabel(entry: ShotHistoryEntry): string {
 function penMenuSection(): MenuItemConstructorOptions[] {
   const template: MenuItemConstructorOptions[] = [
     { label: "KE Pen", enabled: false },
+    {
+      label: "Agent Displays…",
+      enabled: agentDisplays !== null,
+      click: () => void agentDisplays?.openSwitcher(),
+    },
+    ...(agentDisplayStartupError
+      ? [
+          {
+            label: "Agent Displays unavailable",
+            enabled: false,
+            toolTip: agentDisplayStartupError,
+          } satisfies MenuItemConstructorOptions,
+        ]
+      : []),
+    { type: "separator" },
     {
       label: phase === "idle" ? `Draw with KE Pen   ${SHORTCUT_LABEL}` : "Cancel KE Pen",
       enabled: phase !== "idle" || !shotOwnsTheScreen(),

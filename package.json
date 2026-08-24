@@ -1,6 +1,6 @@
 {
   "name": "@kestudios/pen-mcp",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "KE Pen is the free cross-platform visual pointing layer for MCP-capable AI assistants.",
   "type": "module",
   "main": "dist/desktop/main.cjs",
