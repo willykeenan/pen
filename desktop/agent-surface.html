@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'self'; object-src 'none'; base-uri 'none'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>KE Pen isolated agent display</title>
+    <link rel="stylesheet" href="agent-surface.css" />
+  </head>
+  <body>
+    <header>
+      <div class="surface-brand"><span></span> KE TEST SURFACE</div>
+      <nav aria-label="Fixture navigation"><a href="#overview">Overview</a><a href="#form">Form test</a><a href="#responsive">Responsive</a></nav>
+      <div class="isolated-pill">ISOLATED</div>
+    </header>
+    <main>
+      <section class="hero" id="overview">
+        <p class="eyebrow">AGENT WORKSPACE</p>
+        <h1 id="agent-label">Agent</h1>
+        <p>This is an app-hosted testing canvas. Input stays inside this surface and never moves the computer's real cursor.</p>
+        <div class="task-line"><span></span><strong id="task-id">isolated-test</strong></div>
+      </section>
+      <section class="fixture-grid">
+        <article>
+          <span class="step">01</span>
+          <h2>Visual state</h2>
+          <p>Use the independent cursor to inspect spacing, focus, and responsive behavior.</p>
+          <button type="button">Fixture action</button>
+        </article>
+        <article id="form">
+          <span class="step">02</span>
+          <h2>Input test</h2>
+          <label for="fixture-input">Safe fixture value</label>
+          <div class="input-row"><input id="fixture-input" autocomplete="off" placeholder="Type here" /><button id="fixture-submit" type="button">Test</button></div>
+          <p id="fixture-result" role="status">Nothing is sent or saved.</p>
+        </article>
+        <article id="responsive">
+          <span class="step">03</span>
+          <h2>Isolation proof</h2>
+          <dl><div><dt>Storage</dt><dd>Memory only</dd></div><div><dt>Permissions</dt><dd>Denied</dd></div><div><dt>Desktop input</dt><dd>None</dd></div></dl>
+        </article>
+      </section>
+    </main>
+    <script src="agent-surface.js"></script>
+  </body>
+</html>

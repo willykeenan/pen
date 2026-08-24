@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>KE Pen · Agent Displays</title>
+    <link rel="stylesheet" href="agent-displays.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand-mark" aria-hidden="true"><span></span></div>
+      <div>
+        <p class="eyebrow">KE PEN</p>
+        <h1>Agent Displays</h1>
+        <p>Private test surfaces with visible, independent cursors.</p>
+      </div>
+      <div class="safety-lock"><span aria-hidden="true">◆</span> OFFSCREEN · ISOLATED</div>
+    </header>
+
+    <main class="app-shell">
+      <aside class="sidebar" aria-label="Agent displays">
+        <div class="sidebar-heading">
+          <div>
+            <span>DISPLAY RACK</span>
+            <strong>One surface per task</strong>
+          </div>
+          <span class="live-dot" aria-hidden="true"></span>
+        </div>
+        <div id="session-list" class="session-list" role="listbox" aria-label="Available agent displays"></div>
+        <div class="boundary-card">
+          <span class="boundary-icon" aria-hidden="true">⌁</span>
+          <div>
+            <strong>Your desktop stays yours</strong>
+            <p>Agents can input only inside their assigned canvas. KE Pen never moves the Mac cursor.</p>
+          </div>
+        </div>
+      </aside>
+
+      <section class="content">
+        <div id="empty-state" class="empty-state" hidden>
+          <div class="empty-orbit" aria-hidden="true"><span></span></div>
+          <h2>No agent displays yet</h2>
+          <p>An agent can claim a private canvas through KE Pen without taking over your desktop.</p>
+        </div>
+
+        <div id="workspace" class="workspace" hidden>
+          <div class="workspace-toolbar">
+            <div class="workspace-identity">
+              <div class="title-line">
+                <h2 id="selected-title">Agent display</h2>
+                <span id="state-pill" class="pill" data-state="ready">LIVE</span>
+              </div>
+              <p id="selected-meta">Agent · 1440 × 900</p>
+            </div>
+            <div class="toolbar-actions">
+              <span id="controller-pill" class="controller-pill" data-controller="agent">AGENT HAS CONTROL</span>
+              <button id="take-control" class="primary-action" type="button">Take control</button>
+              <button id="stop-display" class="stop-action" type="button" aria-label="Stop and revoke this display">Stop</button>
+            </div>
+          </div>
+
+          <div id="viewport" class="viewport" aria-label="Selected isolated agent display" aria-describedby="live-status">
+            <img id="display-frame" alt="Live isolated test surface" draggable="false" />
+            <div id="agent-cursor" class="agent-cursor" aria-hidden="true">
+              <svg viewBox="0 0 28 34"><path d="M3 2.8 23 21l-9.2 1.7-4.2 8.5z" /></svg>
+              <span id="cursor-label">Agent</span>
+            </div>
+            <div class="viewport-badge"><span></span> APP-HOSTED TEST DISPLAY</div>
+          </div>
+
+          <div class="truth-row">
+            <article>
+              <span>LAST OBSERVED ACTION</span>
+              <strong id="last-action">Claimed</strong>
+            </article>
+            <article>
+              <span>SESSION BOUNDARY</span>
+              <strong id="session-truth">Memory-only browser profile</strong>
+            </article>
+          </div>
+          <div id="live-status" class="live-status" aria-live="polite"></div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span id="permission-truth">Checking local permission truth…</span>
+      <strong>Not a macOS virtual monitor · Real-desktop control unavailable</strong>
+    </footer>
+    <script src="agent-displays.js"></script>
+  </body>
+</html>

@@ -85,7 +85,7 @@ test("image paths and annotation ids cannot escape the local Pen store", async (
   await assert.rejects(() => fixture.store.claimCurrentForRead(), /outside its annotation directory/);
 });
 
-test("the MCP surface exposes exactly the three Pen lifecycle tools", async (t) => {
+test("the MCP surface keeps the Pen lifecycle and adds bounded Agent Display tools", async (t) => {
   const fixture = await createFixture("pending");
   const server = createPenServer(fixture.store);
   const client = new Client({ name: "pen-contract-test", version: "1.0.0" });
@@ -101,7 +101,18 @@ test("the MCP surface exposes exactly the three Pen lifecycle tools", async (t) 
   const listed = await client.listTools();
   assert.deepEqual(
     listed.tools.map((tool) => tool.name).sort(),
-    ["pen_complete", "pen_read", "pen_status"],
+    [
+      "pen_complete",
+      "pen_display_act",
+      "pen_display_claim",
+      "pen_display_heartbeat",
+      "pen_display_navigate",
+      "pen_display_snapshot",
+      "pen_display_status",
+      "pen_display_stop",
+      "pen_read",
+      "pen_status",
+    ],
   );
 
   const status = await client.callTool({ name: "pen_status", arguments: {} });

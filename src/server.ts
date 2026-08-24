@@ -1,17 +1,29 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { AgentDisplayClient } from "./agent-display-client.js";
+import {
+  penDisplayAct,
+  penDisplayClaim,
+  penDisplayHeartbeat,
+  penDisplayNavigate,
+  penDisplaySnapshot,
+  penDisplayStatus,
+  penDisplayStop,
+} from "./agent-display-tools.js";
+import { agentDisplayActionSchema } from "./agent-display-protocol.js";
 import { AnnotationStore } from "./store.js";
 import { penComplete, penRead, penStatus } from "./tools.js";
 
 export const SERVER_NAME = "pen-by-ke-studios";
-export const SERVER_VERSION = "0.4.0";
+export const SERVER_VERSION = "0.5.0";
 
 export function createPenServer(store = new AnnotationStore()): McpServer {
+  const displayClient = new AgentDisplayClient(store.root);
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     {
       instructions:
-        "Pen is the user's visual pointing layer. When the user says pen, circle, circled area, marked area, look here, or refers to something they drew around, call pen_status and then pen_read. Reading never clears the overlay. After inspecting the returned image and completing your reasoning, call pen_complete as the LAST tool call immediately before the user-facing reply. This explicit two-phase handshake keeps the ink visible until the AI understands it. Pen was created by William Keenan at K&E Studios (kestudios.dev).",
+        "Pen is the user's visual pointing layer. When the user says pen, circle, circled area, marked area, look here, or refers to something they drew around, call pen_status and then pen_read. Reading never clears the overlay. After inspecting the returned image and completing your reasoning, call pen_complete as the LAST tool call immediately before the user-facing reply. Agent Displays are separate app-hosted, offscreen local test surfaces. Claim one only for a concrete local test, keep its ownerToken private, call heartbeat during long work, and stop it afterward. Agent Displays never move the native cursor or control the real desktop. Pen was created by William Keenan at K&E Studios (kestudios.dev).",
     },
   );
 
@@ -78,6 +90,156 @@ export function createPenServer(store = new AnnotationStore()): McpServer {
       },
     },
     async (options) => penComplete(store, options),
+  );
+
+  server.registerTool(
+    "pen_display_claim",
+    {
+      title: "Claim an isolated Agent Display",
+      description:
+        "Create one app-hosted offscreen test display and synthetic cursor for an exact agent/task identity. The surface is isolated from the real desktop, uses a memory-only browser profile, and accepts only packaged fixtures or localhost/loopback URLs.",
+      inputSchema: {
+        agentId: z.string().trim().min(1).max(180),
+        taskId: z.string().trim().min(1).max(180),
+        label: z.string().trim().min(1).max(100),
+        width: z.number().int().min(640).max(2_560).optional(),
+        height: z.number().int().min(480).max(1_600).optional(),
+        targetUrl: z
+          .string()
+          .trim()
+          .min(1)
+          .max(2_048)
+          .optional()
+          .describe("Optional localhost/loopback http/https target. Public origins are refused."),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (input) => penDisplayClaim(displayClient, input),
+  );
+
+  server.registerTool(
+    "pen_display_status",
+    {
+      title: "Inspect Agent Displays",
+      description:
+        "List redacted Agent Display state, exact task identity, controller ownership, cursor position, and permission truth. Does not return capability tokens, page content, URLs beyond origin, or typed text.",
+      inputSchema: { sessionId: z.string().uuid().optional() },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (input) => penDisplayStatus(displayClient, input),
+  );
+
+  server.registerTool(
+    "pen_display_navigate",
+    {
+      title: "Navigate an isolated Agent Display",
+      description:
+        "Navigate the owned display to a localhost or loopback test URL. The first origin locks the session; cross-origin navigation, public websites, embedded credentials, downloads, popups, and permissions are refused.",
+      inputSchema: {
+        sessionId: z.string().uuid(),
+        ownerToken: z.string().min(32).max(256),
+        url: z.string().trim().min(1).max(2_048),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (input) => penDisplayNavigate(displayClient, input),
+  );
+
+  server.registerTool(
+    "pen_display_act",
+    {
+      title: "Use an isolated Agent Display cursor",
+      description:
+        "Move the synthetic cursor or send bounded click, typing, key, and scroll input only to the owned offscreen test surface. It never emits system input. Calls fail while William has taken control.",
+      inputSchema: {
+        sessionId: z.string().uuid(),
+        ownerToken: z.string().min(32).max(256),
+        action: agentDisplayActionSchema,
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (input) => penDisplayAct(displayClient, input),
+  );
+
+  server.registerTool(
+    "pen_display_snapshot",
+    {
+      title: "Read an isolated Agent Display",
+      description:
+        "Capture the owned offscreen test surface for visual verification. The PNG/JPEG is returned in memory and is not written to Agent Display history.",
+      inputSchema: {
+        sessionId: z.string().uuid(),
+        ownerToken: z.string().min(32).max(256),
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (input) => penDisplaySnapshot(displayClient, input),
+  );
+
+  server.registerTool(
+    "pen_display_heartbeat",
+    {
+      title: "Keep an Agent Display active",
+      description:
+        "Refresh the authenticated activity timestamp during a long local test. A display with no authenticated activity expires after 30 minutes.",
+      inputSchema: {
+        sessionId: z.string().uuid(),
+        ownerToken: z.string().min(32).max(256),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (input) => penDisplayHeartbeat(displayClient, input),
+  );
+
+  server.registerTool(
+    "pen_display_stop",
+    {
+      title: "Stop and revoke an Agent Display",
+      description:
+        "Stop the exact owned test display, revoke its cursor/input capability, destroy the renderer, and clear its memory-only browser storage.",
+      inputSchema: {
+        sessionId: z.string().uuid(),
+        ownerToken: z.string().min(32).max(256),
+        reason: z.string().trim().min(1).max(300).optional(),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (input) => penDisplayStop(displayClient, input),
   );
 
   return server;
