@@ -15,7 +15,7 @@ The same app also ships **KE Shot**: one hotkey, drag a region, and the image is
 on your clipboard instantly—optionally uploaded to an endpoint you own, so you
 get a shareable link too. See [KE Shot](#ke-shot) below.
 
-The 0.5.0 source candidate adds two agent-only layers. **Agent Displays** let
+KE Pen 0.5.0 adds two agent-only layers. **Agent Displays** let
 every exact agent/task claim a separate app-hosted test canvas with its own
 visible software cursor. Those cursors operate concurrently inside separate
 offscreen browser profiles; they never move or replace the computer's single
@@ -41,7 +41,7 @@ Free and open source under the MIT license—no paid tier or feature gate.
 | Windows | x64 installer or ZIP | Windows 10/11, 64-bit |
 | Linux | x64 AppImage, DEB, or tar.gz | X11 or XWayland desktop session |
 
-The first cross-platform release is not code-signed or notarized. macOS may
+The public builds are not commercially code-signed or notarized. macOS may
 require right-click → **Open**, Windows may show SmartScreen, and Linux may
 require `chmod +x` for the AppImage. The source, checksums, and native build
 workflows are public so anyone can inspect or reproduce the artifacts.
@@ -264,7 +264,7 @@ source-based installation instead, install the public GitHub package after
 Node.js 20 or newer:
 
 ```bash
-npm install --global github:willykeenan/pen#v0.4.6
+npm install --global github:willykeenan/pen#v0.5.0
 ```
 
 Then configure your AI host:

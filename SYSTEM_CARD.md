@@ -10,7 +10,7 @@ Version 0.4.0 adds **KE Shot**, a capture-and-share mode in the same app: one
 hotkey, one dragged region, the image on the clipboard before any disk or
 network work, and optionally a link from an endpoint the user owns.
 
-The 0.5.0 source candidate adds **Agent Displays**: one isolated offscreen test
+KE Pen 0.5.0 adds **Agent Displays**: one isolated offscreen test
 canvas and visible software cursor per exact agent/task, plus a human switcher
 with exclusive handoff and Stop/revoke. It also adds background-only **agent
 visual references**: one explicit PNG or inked Pen crop plus direction, bound
@@ -118,7 +118,9 @@ touch human UI, capture a desktop, use the clipboard, or upload.
 - macOS 13+ universal, Windows 10/11 x64, and Linux x64 are the release targets.
 - Linux overlay reliability requires X11 or XWayland; native Wayland remains
   compositor-dependent.
-- Node.js 20+ and manual MCP host configuration are required.
+- The installed app embeds its MCP server, but the user still has to paste the
+  copied setup into a compatible AI host and restart that host. Node.js 20+ is
+  required only for source-based installation.
 - Agent Displays host web test surfaces only. They do not appear as a display in
   macOS System Settings and cannot host arbitrary native application windows.
 - Agent visual references work only where sender and recipient can reach the
@@ -128,10 +130,10 @@ touch human UI, capture a desktop, use the clipboard, or upload.
   paste an endpoint and token into a local settings file; changing the KE Shot
   hotkey requires restarting the app. Deleting a shot depends on the user's own
   endpoint implementing `DELETE /<id>`.
-- The first release is unsigned and not Apple-notarized or Windows-signed.
+- Public builds are unsigned and not Apple-notarized or Windows-signed.
 - No claim of model training, autonomous authority, broad adoption, or
   universal host compatibility is made.
 
-Created by William Keenan at K&E Studios. Version 0.4.0 is completely free and
+Created by William Keenan at K&E Studios. Version 0.5.0 is completely free and
 open source under the MIT license, with no paid tier or feature gate. See
 [kestudios.dev/pen](https://kestudios.dev/pen?ref=github-pen).

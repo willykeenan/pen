@@ -29,6 +29,7 @@
     "check": "npm run typecheck && npm test",
     "check:mac": "npm run check && swift test",
     "verify:bundle": "node scripts/verify-bundled-mcp.mjs dist/mcp-app/index.js",
+    "verify:public": "node scripts/verify-public-release.mjs",
     "verify:package": "node scripts/verify-package.mjs",
     "checksums": "node scripts/write-release-checksums.mjs",
     "package:mac": "npm run build && electron-builder --mac --universal --publish never",

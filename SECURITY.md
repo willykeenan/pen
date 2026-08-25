@@ -15,6 +15,17 @@ KE Pen intentionally has a narrow boundary:
 - image reads are confined to KE Pen's data directory and capped at 16 MB;
 - `pen_complete` can change only the current annotation's lifecycle state.
 
+## No KE Studios access
+
+The public source and installers contain no KE Studios credential, private API
+endpoint, internal filesystem path, agent-room client, admin hook, or fallback
+upload destination. The visible `kestudios.dev` and GitHub links are ordinary
+public documentation links; they do not authenticate the app or grant access
+to any KE Studios account, service, machine, agent, repository, or message
+channel. KE Shot networking remains disabled until the user supplies both an
+HTTPS endpoint they own and its token. Agent visual references produce a local
+capability envelope but deliberately contain no message transport.
+
 Agent visual references use a separate owner-only local store and a 256-bit
 installation secret. Each reference is bound to one sender, one different
 recipient, one image checksum, one random generation, one expiry, and a

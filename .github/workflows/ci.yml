@@ -42,6 +42,9 @@ jobs:
       - name: Verify exact MCP discovery surface
         run: npm run verify:bundle
 
+      - name: Verify public release has no private KE access wiring
+        run: npm run verify:public
+
   native-mac-contract:
     name: Legacy native macOS contract
     runs-on: macos-14
@@ -78,6 +81,8 @@ jobs:
       - run: npm ci
       - name: Build native installers
         run: npm run ${{ matrix.script }}
+      - name: Verify packaged source has no private KE access wiring
+        run: npm run verify:public
       - name: Boot packaged app on macOS or Windows
         if: runner.os != 'Linux'
         run: npm run verify:package -- ${{ matrix.verify }}

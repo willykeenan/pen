@@ -65,6 +65,8 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run ${{ matrix.script }}
+      - name: Verify packaged source has no private KE access wiring
+        run: npm run verify:public
       - name: Boot packaged app on macOS or Windows
         if: runner.os != 'Linux'
         run: npm run verify:package -- ${{ matrix.verify }}

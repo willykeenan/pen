@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { EXPECTED_TOOL_NAMES } from "./expected-tools.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const platform = process.argv[2] ?? process.platform;
@@ -100,11 +101,13 @@ async function verifyBridge(command, serverPath, env, label) {
     const listed = await client.listTools();
     assert.deepEqual(
       listed.tools.map((tool) => tool.name).sort(),
-      ["pen_complete", "pen_read", "pen_status"],
+      EXPECTED_TOOL_NAMES,
     );
     const status = await client.callTool({ name: "pen_status", arguments: {} });
     assert.equal(status.isError, undefined);
-    process.stdout.write(`Verified packaged KE Pen MCP bridge (${label}): tools=3\n`);
+    process.stdout.write(
+      `Verified packaged KE Pen MCP bridge (${label}): tools=${EXPECTED_TOOL_NAMES.length}\n`,
+    );
   } catch (error) {
     throw new Error(
       `Packaged KE Pen MCP bridge failed (${label}).\n${bridgeStderr}\n${error instanceof Error ? error.stack : String(error)}`,
