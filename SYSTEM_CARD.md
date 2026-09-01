@@ -10,6 +10,11 @@ Version 0.4.0 adds **KE Shot**, a capture-and-share mode in the same app: one
 hotkey, one dragged region, the image on the clipboard before any disk or
 network work, and optionally a link from an endpoint the user owns.
 
+KE Pen 0.5.1 moves the successful macOS link confirmation out of Notification
+Center and into a KE Pen-owned top-right card. The card appears without taking
+focus, stays clickable while visible, and keeps the private viewer URL in the
+main process rather than its sandboxed renderer.
+
 KE Pen 0.5.0 adds **Agent Displays**: one isolated offscreen test
 canvas and visible software cursor per exact agent/task, plus a human switcher
 with exclusive handoff and Stop/revoke. It also adds background-only **agent
@@ -52,7 +57,9 @@ toggle, local filename collisions, bounded history with in-place duplicate
 replacement, the retry decision per HTTP status class and per endpoint error
 code, delete-URL derivation, upload header construction, region-to-pixel
 mapping, refusal of cleartext endpoints, and rejection of malformed or hostile
-endpoint responses. The CI matrix builds on macOS, Windows, and Linux;
+endpoint responses. A real macOS Electron runtime check verifies that the link
+card is visible, top-right, unfocused, dismissible, sandboxed, and contains no
+private viewer URL. The CI matrix builds on macOS, Windows, and Linux;
 each packaging lane boots the packaged executable before publishing its
 artifact and SHA-256 manifest.
 
@@ -134,6 +141,6 @@ touch human UI, capture a desktop, use the clipboard, or upload.
 - No claim of model training, autonomous authority, broad adoption, or
   universal host compatibility is made.
 
-Created by William Keenan at K&E Studios. Version 0.5.0 is completely free and
+Created by William Keenan at K&E Studios. Version 0.5.1 is completely free and
 open source under the MIT license, with no paid tier or feature gate. See
 [kestudios.dev/pen](https://kestudios.dev/pen?ref=github-pen).

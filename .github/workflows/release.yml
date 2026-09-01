@@ -64,6 +64,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - name: Verify real macOS KE Shot link popup
+        if: runner.os == 'macOS'
+        run: npm run verify:toast:mac
       - run: npm run ${{ matrix.script }}
       - name: Verify packaged source has no private KE access wiring
         run: npm run verify:public

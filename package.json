@@ -1,6 +1,6 @@
 {
   "name": "@kestudios/pen-mcp",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "KE Pen is the free cross-platform visual pointing layer for MCP-capable AI assistants.",
   "type": "module",
   "main": "dist/desktop/main.cjs",
@@ -29,6 +29,7 @@
     "check": "npm run typecheck && npm test",
     "check:mac": "npm run check && swift test",
     "verify:bundle": "node scripts/verify-bundled-mcp.mjs dist/mcp-app/index.js",
+    "verify:toast:mac": "npm run build:desktop && node scripts/verify-shot-toast-runtime.mjs",
     "verify:public": "node scripts/verify-public-release.mjs",
     "verify:package": "node scripts/verify-package.mjs",
     "checksums": "node scripts/write-release-checksums.mjs",

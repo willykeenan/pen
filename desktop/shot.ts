@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { app, clipboard, nativeImage, Notification, shell, type NativeImage } from "electron";
+import { clipboard, nativeImage, type NativeImage } from "electron";
 import type { SettingsStore, ShotHistoryStore, ShotSettings } from "./settings.js";
+import { presentShotNotice } from "./shot-toast.js";
 import {
   buildUploadHeaders,
   describeUploadFailure,
@@ -10,7 +11,6 @@ import {
   nextAvailableName,
   parseErrorEnvelope,
   parseShotResponse,
-  planShotNotificationPresentation,
   planUploadRetry,
   readPngDimensions,
   shotDeleteUrl,
@@ -93,7 +93,7 @@ export function createShotRuntime(options: ShotRuntimeOptions): ShotRuntime {
         clipboard.writeImage(image);
         await deliver(png, image);
       } catch (error) {
-        notify("KE Shot failed", messageFor(error));
+        presentShotNotice("KE Shot failed", messageFor(error));
       } finally {
         running = false;
         options.onChange();
@@ -136,7 +136,7 @@ export function createShotRuntime(options: ShotRuntimeOptions): ShotRuntime {
             // Leave the entry pending; the local file is still the safety net.
           }
         }
-        notify(
+        presentShotNotice(
           recovered > 0 ? "KE Shot uploads recovered" : "KE Shot uploads still failing",
           recovered > 0
             ? `${recovered} saved capture${recovered === 1 ? "" : "s"} now have links.`
@@ -179,12 +179,12 @@ export function createShotRuntime(options: ShotRuntimeOptions): ShotRuntime {
           imageUrl: null,
           error: null,
         });
-        notify(
+        presentShotNotice(
           "Shot deleted from your endpoint",
           "It cannot recall bytes a chat app, unfurl service, or CDN already fetched.",
         );
       } catch (error) {
-        notify("KE Shot could not delete that shot", messageFor(error));
+        presentShotNotice("KE Shot could not delete that shot", messageFor(error));
       } finally {
         running = false;
         options.onChange();
@@ -222,10 +222,11 @@ export function createShotRuntime(options: ShotRuntimeOptions): ShotRuntime {
         uploadedEntry(key, result.response, localPath, png.byteLength, null),
       );
       applyCopyMode(settings.copyMode, image, result.response.url);
-      notify(
+      presentShotNotice(
         "KE Shot link ready",
         `${result.response.url}${degradedNote(result.degraded)}`,
         result.response.url,
+        result.degraded,
       );
     } catch (error) {
       // Never lose the capture: force a local copy even when the setting is off.
@@ -243,7 +244,7 @@ export function createShotRuntime(options: ShotRuntimeOptions): ShotRuntime {
         bytes: png.byteLength,
         error: messageFor(error),
       });
-      notify(
+      presentShotNotice(
         "Saved locally — upload failed",
         localPath
           ? `${messageFor(error)} Retry from the KE Shot tray menu.`
@@ -255,7 +256,7 @@ export function createShotRuntime(options: ShotRuntimeOptions): ShotRuntime {
   function noticeUnconfigured(): void {
     if (unconfiguredNoticeShown) return;
     unconfiguredNoticeShown = true;
-    notify(
+    presentShotNotice(
       "KE Shot is not uploading yet",
       "Add shotEndpoint and shotToken to the settings file, then restart KE Pen.",
     );
@@ -506,19 +507,6 @@ async function saveLocalCopy(png: Buffer, directory: string, at: Date): Promise<
   const target = path.join(directory, name);
   await writeFile(target, png, { mode: 0o600 });
   return target;
-}
-
-function notify(title: string, body: string, url?: string): void {
-  if (!Notification.isSupported()) return;
-  const notification = new Notification({ title, body });
-  if (url) notification.on("click", () => void shell.openExternal(url));
-  const presentation = planShotNotificationPresentation(process.platform, Boolean(url));
-  if (presentation.hideApp) {
-    app.hide();
-    setTimeout(() => notification.show(), presentation.delayMs);
-    return;
-  }
-  notification.show();
 }
 
 function safeJson(text: string): unknown {

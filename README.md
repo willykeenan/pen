@@ -15,6 +15,12 @@ The same app also ships **KE Shot**: one hotkey, drag a region, and the image is
 on your clipboard instantly—optionally uploaded to an endpoint you own, so you
 get a shareable link too. See [KE Shot](#ke-shot) below.
 
+KE Pen 0.5.1 makes the successful macOS link confirmation a KE Pen-owned,
+clickable top-right card. It no longer depends on Notification Center, which
+macOS can deliberately mute while a display is shared or recorded. The card
+does not take focus when it appears, and its sandboxed renderer never receives
+the private viewer URL; only the main process opens the validated link.
+
 KE Pen 0.5.0 adds two agent-only layers. **Agent Displays** let
 every exact agent/task claim a separate app-hosted test canvas with its own
 visible software cursor. Those cursors operate concurrently inside separate
@@ -166,9 +172,9 @@ network errors, 429, and 5xx responses, stops early when the endpoint names a
 permanent condition such as `not_configured` in the error body, and rejects a
 response whose `url` or `imageUrl` is not an `https` URL. Captures above 4 MB
 are re-encoded as JPEG locally first, because that is the practical serverless
-body limit; the notification says so when it happens, because the clipboard
-still holds the lossless original. If the upload fails the capture is always
-still written to disk and the tray offers **Retry failed uploads**.
+body limit; the confirmation card says so when it happens, because the
+clipboard still holds the lossless original. If the upload fails the capture
+is always still written to disk and the tray offers **Retry failed uploads**.
 
 Uploading is publishing. Deleting a shot removes it from your endpoint, but it
 cannot recall bytes that a chat app, unfurl service, or CDN already fetched. Do
@@ -264,7 +270,7 @@ source-based installation instead, install the public GitHub package after
 Node.js 20 or newer:
 
 ```bash
-npm install --global github:willykeenan/pen#v0.5.0
+npm install --global github:willykeenan/pen#v0.5.1
 ```
 
 Then configure your AI host:

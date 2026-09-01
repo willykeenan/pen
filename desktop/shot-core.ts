@@ -50,11 +50,6 @@ export interface RetryPlan {
   delayMs: number;
 }
 
-export interface ShotNotificationPresentation {
-  hideApp: boolean;
-  delayMs: number;
-}
-
 export interface RegionCropInput {
   rect: ShotRect;
   displayWidth: number;
@@ -86,21 +81,6 @@ const TERMINAL_ERROR_CODES = new Set([
   "invalid_source",
   "invalid_title",
 ]);
-
-// A Dock-launched capture leaves KE Pen as macOS's foreground application even
-// after the native region picker closes. macOS accepts notifications from the
-// foreground app but suppresses their visual banner, which also removes the
-// user's direct click-through to the fresh viewer. Hide only for successful
-// link notifications and leave a short handoff for LaunchServices to publish
-// the new non-focal state before Notification.show().
-export function planShotNotificationPresentation(
-  platform: NodeJS.Platform,
-  hasViewerLink: boolean,
-): ShotNotificationPresentation {
-  return platform === "darwin" && hasViewerLink
-    ? { hideApp: true, delayMs: 150 }
-    : { hideApp: false, delayMs: 0 };
-}
 
 export function isCopyMode(value: unknown): value is CopyMode {
   return typeof value === "string" && COPY_MODES.includes(value as CopyMode);

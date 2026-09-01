@@ -36,6 +36,10 @@ jobs:
       - name: Verify shared contracts
         run: npm run check
 
+      - name: Verify real macOS KE Shot link popup
+        if: runner.os == 'macOS'
+        run: npm run verify:toast:mac
+
       - name: Build desktop and MCP bundles
         run: npm run build
 

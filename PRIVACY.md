@@ -33,6 +33,12 @@ One other outbound request exists, and only when you ask for it: **Recent shots
 ▸ Delete from endpoint…** sends a `DELETE` to that same endpoint, with the same
 token and no image data, after asking you to confirm.
 
+On macOS, a successful link upload is confirmed by a small KE Pen-owned card
+instead of Notification Center. The card's renderer is sandboxed and receives
+only fixed local content; it never receives, renders, stores, or logs the
+private viewer URL. Clicking the card asks the app's main process to open the
+already-validated URL. The card itself makes no network request.
+
 Uploading is publishing. Once a capture reaches your endpoint, deleting it there
 does not recall copies already fetched by a chat app, an unfurl service, or a
 CDN. Do not capture anything you would not hand over permanently.

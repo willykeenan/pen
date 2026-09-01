@@ -4,6 +4,8 @@ KE Pen intentionally has a narrow boundary:
 
 - the desktop app requests only the operating system's screen-capture access;
 - the renderer is sandboxed, context-isolated, and loads packaged local content;
+- the macOS KE Shot link card is sandboxed and never receives the private URL;
+  its fixed local route asks the main process to open the validated URL;
 - navigation and new renderer windows are denied;
 - captures and annotation records remain local, user-owned files;
 - the MCP server uses stdio only and opens no listening network port;
