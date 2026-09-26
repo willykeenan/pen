@@ -6,6 +6,10 @@
 
 **Point at the bug. Your AI gets the point.**
 
+![KE Pen's overlay: a red mark drawn around the part of the screen the AI should look at, with the Pen badge](docs/images/pen-overlay.png)
+
+<sub>Real Pen overlay rendered over a screenshot of another app; the mark was drawn with pointer events.</sub>
+
 KE Pen is a completely free desktop drawing overlay for macOS, Windows, and
 Linux. Draw around anything on screen, keep working in your MCP-capable AI
 client, and let the AI inspect the exact marked crop. The red ink stays visible
