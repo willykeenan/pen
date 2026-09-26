@@ -29,7 +29,7 @@
     "check": "npm run typecheck && npm test",
     "check:mac": "npm run check && swift test",
     "verify:bundle": "node scripts/verify-bundled-mcp.mjs dist/mcp-app/index.js",
-    "verify:toast:mac": "npm run build:desktop && node scripts/verify-shot-toast-runtime.mjs",
+    "verify:toast:mac": "npm run electron:install && npm run build:desktop && node scripts/verify-shot-toast-runtime.mjs",
     "verify:public": "node scripts/verify-public-release.mjs",
     "verify:package": "node scripts/verify-package.mjs",
     "checksums": "node scripts/write-release-checksums.mjs",
@@ -43,7 +43,8 @@
     "test": "node --import tsx --test test/*.test.ts",
     "start:mcp": "node dist/mcp/index.js",
     "prepare": "npm run build:mcp",
-    "prepack": "npm run build:mcp"
+    "prepack": "npm run build:mcp",
+    "electron:install": "node node_modules/electron/install.js"
   },
   "keywords": [
     "mcp",
