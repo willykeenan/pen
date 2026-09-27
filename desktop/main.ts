@@ -471,7 +471,10 @@ function startHoldCapture(): void {
       refreshHoldArm();
       if (previous !== status.state) updateTrayMenu();
       if (status.state === "needs-permission") void maybeExplainHoldPermission();
-      if (status.state === "active") stopAccessibilityWatch();
+      if (status.state === "active") {
+        stopAccessibilityWatch();
+        void maybeAnnounceHoldCapture();
+      }
     },
   });
   holdHelper.configure(shot.settings.current.middleHoldDelayMs);
@@ -550,6 +553,19 @@ async function maybeExplainHoldPermission(): Promise<void> {
   if (process.platform !== "darwin" || IS_HOLD_PROOF || !shot) return;
   if (shot.settings.current.middleHoldPermissionExplained) return;
   await explainHoldPermission();
+}
+
+// Windows needs no permission, so the feature (on by default) introduces
+// itself once instead, with where to turn it off.
+async function maybeAnnounceHoldCapture(): Promise<void> {
+  if (process.platform !== "win32" || IS_HOLD_PROOF || !shot) return;
+  if (shot.settings.current.middleHoldPermissionExplained) return;
+  await shot.settings.update({ middleHoldPermissionExplained: true }).catch(() => undefined);
+  presentShotNotice(
+    "Hold the middle button to capture",
+    "Hold the middle mouse button for half a second to freeze the screen and capture a region. " +
+      "Quick middle clicks still work. Turn it off or change the delay from the KE Pen tray menu.",
+  );
 }
 
 // One plain explanation, then the exact System Settings pane. The helper
