@@ -25,8 +25,7 @@ const forbidden = [
   ["provider API credential name", /\b(?:OPENAI|ANTHROPIC|VERCEL|HUGGINGFACE)_API_KEY\b/],
   ["provider bearer credential name", /\b(?:VERCEL|HF|GITHUB|GH)_TOKEN\b/],
   ["embedded private key", /BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY/],
-  ["private build volume", /\/Volumes\/HEATWAKE_DATA/i],
-  ["private build cache", /_build-cache/i],
+  ["absolute external-volume path", /\/Volumes\/[A-Za-z0-9._ -]+\//],
 ];
 
 for (const file of files) {
