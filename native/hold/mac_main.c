@@ -24,6 +24,11 @@
 #include "hold_core.h"
 #include "protocol.h"
 
+/* scripts/build-native.mjs generates ke_pen_version.h from package.json. A
+ * header, not a -D string, so no shell or compiler driver can mangle quotes. */
+#ifdef KE_PEN_HAVE_VERSION_H
+#include "ke_pen_version.h"
+#endif
 #ifndef KE_PEN_VERSION
 #define KE_PEN_VERSION "0.0.0-dev"
 #endif
