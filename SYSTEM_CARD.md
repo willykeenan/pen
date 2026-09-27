@@ -83,14 +83,15 @@ Hold-to-capture checks add a C state-machine suite with a 100,000-step property
 test (every held press resolves exactly once, no unbalanced up), a strict
 protocol whitelist, supervisor restart/back-off/version checks against a fake
 helper, multi-display capture matching and crop mapping, a real Electron
-runtime proof that every display is frozen before any selector window is
-created, painted, shown, or focused and that the crop reaches the clipboard at
-the exact size (and that each frame is its display's native size, and Escape
-and a right click copy nothing), and synthetic integration tests through the
-real helper on macOS and Windows (click replay after release, hold at threshold
-with nothing leaking, drag pass-through, disarm replay, an open menu surviving
-a hold, recovery after the OS stalls or drops the tap or hook, the helper being
-its own responsible process on macOS, crash recovery).
+isolated real-app runtime proof using a fake helper and an in-memory clipboard:
+all displays are frozen before selector windows appear, images retain native
+sizes, the selected crop has the expected dimensions, and cancellation produces
+no clipboard write. Windows synthetic-input integration exercises the real
+helper in CI. The macOS synthetic-input suite covers replay, timing, drag
+pass-through, menu preservation, and recovery, but its full current run remains
+unqualified: two local harness scenarios did not complete successfully, and
+hosted CI skips it without Accessibility permission. Separate unarmed startup
+checks confirmed the helper owns its permission identity and exits cleanly.
 
 Agent-reference checks add exact sender/recipient isolation, capability denial,
 owner-only file modes, checksum and PNG bounds, source-annotation lifecycle

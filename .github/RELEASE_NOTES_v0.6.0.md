@@ -34,7 +34,8 @@ explains this once; choose **Continue**, then **Open System Settings** in the
 macOS prompt, and switch **ke-pen-hold-helper** on. KE Pen says **Hold to capture is ready** a moment
 later. No restart needed.
 
-Windows needs no permission. Linux is not supported.
+Windows needs no permission. Hold to capture is not supported on Linux; the
+regular Pen and Shot shortcuts remain available there.
 
 ## Why
 
@@ -47,13 +48,14 @@ what you capture.
 
 - The helper's click logic is tested in C, including a 100,000-step random
   test that every held press ends exactly once, as a click or as a capture.
-- A real-app test confirms the picture is taken before any window appears,
-  that each display's picture is its real size, that the selection reaches the
-  clipboard at the right size, and that Esc and a right-click copy nothing.
-- On macOS a test drives the real helper with simulated mouse events: quick
-  clicks come back after release, holds fire on time with nothing leaking to
-  apps, drags pass through, an open menu stays open through a hold, the helper
-  recovers when macOS pauses it, and it asks for its own permission.
+- An isolated real-app test, using a fake helper and in-memory clipboard,
+  checks capture ordering, native image sizes, exact crop size, and cancellation
+  without a clipboard write.
+- The macOS synthetic-input suite covers click replay, hold timing, drag
+  pass-through, menu preservation, and recovery. Its full current run remains
+  unqualified: two local harness scenarios did not complete successfully, and
+  hosted CI skips it without Accessibility permission. Separate unarmed startup
+  checks confirmed the helper owns its permission identity and exits cleanly.
 - On Windows the same kind of test runs in CI with simulated input, including a
   helper that Windows cuts off while it is stalled.
 - The packaged app is checked for a signed helper with its own identity, a
