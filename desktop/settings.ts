@@ -102,9 +102,11 @@ export function normalizeSettings(
     shotShortcut: normalizeShortcut(raw.shotShortcut, defaults.shotShortcut),
     showInDock: typeof raw.showInDock === "boolean" ? raw.showInDock : defaults.showInDock,
     // Never on where the platform cannot support it, whatever the file says.
+    // (The defaults already are: defaultSettings() applies the same rule.)
     middleHoldCapture:
-      holdCaptureSupported(platform) &&
-      (typeof raw.middleHoldCapture === "boolean" ? raw.middleHoldCapture : defaults.middleHoldCapture),
+      typeof raw.middleHoldCapture === "boolean"
+        ? holdCaptureSupported(platform) && raw.middleHoldCapture
+        : defaults.middleHoldCapture,
     middleHoldDelayMs: clampHoldDelay(raw.middleHoldDelayMs, defaults.middleHoldDelayMs),
     middleHoldIntroduced: normalizeVersionMark(raw.middleHoldIntroduced, defaults.middleHoldIntroduced),
     middleHoldPrompted: normalizeVersionMark(raw.middleHoldPrompted, defaults.middleHoldPrompted),
