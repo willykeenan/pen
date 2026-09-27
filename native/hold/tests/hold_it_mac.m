@@ -15,12 +15,15 @@
 #import <Cocoa/Cocoa.h>
 #include <mach/mach_time.h>
 #include <os/lock.h>
+#include <poll.h>
 #include <signal.h>
 #include <spawn.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 
 extern char **environ;
+/* libSystem private; used only to check the helper disclaims responsibility. */
+extern pid_t responsibility_get_pid_responsible_for_pid(pid_t pid) __attribute__((weak_import));
 
 #define HELPER_TAG ((int64_t)0x4B4550454E484C44LL) /* "KEPENHLD" (helper replays) */
 #define TEST_TAG ((int64_t)0x4B45504E54455354LL)   /* "KEPNTEST" (this test's posts) */
@@ -43,6 +46,7 @@ static int g_hold_count = 0;
 static BOOL g_helper_ready = NO;
 static BOOL g_helper_active = NO;
 static BOOL g_helper_needs_permission = NO;
+static int g_tap_restored = 0;
 static volatile BOOL g_real_input = NO;
 static int g_sink_down = 0;
 static int g_sink_up = 0;
@@ -151,6 +155,7 @@ static void handle_helper_line(NSString *line) {
   if ([type isEqualToString:@"active"]) g_helper_active = YES;
   if ([type isEqualToString:@"needs-permission"]) g_helper_needs_permission = YES;
   if ([type isEqualToString:@"hold"] && g_hold_count < 64) g_holds[g_hold_count++] = now_ns();
+  if ([type isEqualToString:@"tap-restored"]) g_tap_restored++;
   os_unfair_lock_unlock(&g_lock);
 }
 
@@ -264,6 +269,7 @@ static void reset_counts(void) {
   g_hold_count = 0;
   g_sink_down = 0;
   g_sink_up = 0;
+  g_tap_restored = 0;
   os_unfair_lock_unlock(&g_lock);
 }
 
@@ -526,6 +532,105 @@ static void scenario_eof_while_pending(NSString *helper) {
   });
 }
 
+// macOS disables a tap whose callback stops answering and passes events on
+// without it. A helper frozen mid-press must, once it runs again, keep a press
+// that is still held (and still swallow its up), and give back a press whose
+// release went by while it was frozen instead of reporting a hold.
+static void scenario_tap_timeout_keeps_held_press(void) {
+  reset_counts();
+  post(kCGEventOtherMouseDown, 0, 0);
+  sleep_ms(100);
+  kill(g_helper_pid, SIGSTOP);
+  post(kCGEventOtherMouseDragged, 1, 0); /* within the slop; makes the tap time out */
+  sleep_ms(2200);
+  kill(g_helper_pid, SIGCONT);
+  sleep_ms(600);
+  post(kCGEventOtherMouseUp, 1, 0);
+  sleep_ms(300);
+  Snapshot s = snapshot();
+  int restored;
+  os_unfair_lock_lock(&g_lock);
+  restored = g_tap_restored;
+  os_unfair_lock_unlock(&g_lock);
+  BOOL passed = restored >= 1 && s.holds == 1 && s.downs == 0 && s.ups == 0;
+  record(@"tap-timeout-keeps-held-press", passed, @{
+    @"tapRestored" : @(restored), @"holds" : @(s.holds), @"deliveredDowns" : @(s.downs),
+    @"deliveredUps" : @(s.ups)
+  });
+}
+
+static void scenario_tap_timeout_after_release_gives_click_back(void) {
+  reset_counts();
+  post(kCGEventOtherMouseDown, 0, 0);
+  sleep_ms(100);
+  kill(g_helper_pid, SIGSTOP);
+  post(kCGEventOtherMouseUp, 0, 0); /* goes by while the helper is frozen */
+  sleep_ms(2200);
+  kill(g_helper_pid, SIGCONT);
+  sleep_ms(700);
+  Snapshot s = snapshot();
+  BOOL passed = s.holds == 0 && s.helper_downs == 1 && s.helper_ups == 1;
+  record(@"tap-timeout-after-release-gives-click-back", passed, @{
+    @"holds" : @(s.holds), @"replayedDowns" : @(s.helper_downs), @"replayedUps" : @(s.helper_ups),
+    @"unwatchedUpsDelivered" : @(s.test_ups)
+  });
+}
+
+// The shipped helper holds its own Accessibility approval: it re-executes
+// itself as its own responsible process, so macOS never checks (or lends it)
+// the approval of whoever started it.
+static void scenario_disclaimed_helper(NSString *helper) {
+  int in_pipe[2], out_pipe[2];
+  pid_t pid = 0;
+  if (pipe(in_pipe) != 0 || pipe(out_pipe) != 0) {
+    record(@"helper-is-its-own-responsible-process", NO, @{@"started" : @NO});
+    return;
+  }
+  posix_spawn_file_actions_t actions;
+  posix_spawn_file_actions_init(&actions);
+  posix_spawn_file_actions_adddup2(&actions, in_pipe[0], STDIN_FILENO);
+  posix_spawn_file_actions_adddup2(&actions, out_pipe[1], STDOUT_FILENO);
+  posix_spawn_file_actions_addclose(&actions, in_pipe[1]);
+  posix_spawn_file_actions_addclose(&actions, out_pipe[0]);
+  const char *path = helper.fileSystemRepresentation;
+  char *const argv[] = {(char *)path, NULL};
+  unsetenv("KE_PEN_HOLD_INHERIT_RESPONSIBILITY");
+  int result = posix_spawn(&pid, path, &actions, NULL, argv, environ);
+  setenv("KE_PEN_HOLD_INHERIT_RESPONSIBILITY", "1", 1);
+  posix_spawn_file_actions_destroy(&actions);
+  close(in_pipe[0]);
+  close(out_pipe[1]);
+  NSMutableString *output = [NSMutableString string];
+  uint64_t deadline = now_ns() + 3000ull * 1000000ull;
+  while (result == 0 && now_ns() < deadline &&
+         !([output containsString:@"\"needs-permission\""] || [output containsString:@"\"active\""])) {
+    struct pollfd descriptor = {out_pipe[0], POLLIN, 0};
+    if (poll(&descriptor, 1, 100) > 0) {
+      char buffer[512];
+      ssize_t count = read(out_pipe[0], buffer, sizeof(buffer));
+      if (count <= 0) break;
+      [output appendString:[[NSString alloc] initWithBytes:buffer length:(NSUInteger)count
+                                                  encoding:NSUTF8StringEncoding] ?: @""];
+    }
+  }
+  pid_t responsible = (result == 0 && responsibility_get_pid_responsible_for_pid != NULL)
+                          ? responsibility_get_pid_responsible_for_pid(pid)
+                          : -1;
+  BOOL reported = [output containsString:@"\"needs-permission\""] || [output containsString:@"\"active\""];
+  ssize_t written = write(in_pipe[1], "{\"cmd\":\"quit\"}\n", 15);
+  (void)written;
+  close(in_pipe[1]);
+  int status = 0;
+  if (result == 0) waitpid(pid, &status, 0);
+  close(out_pipe[0]);
+  BOOL passed = result == 0 && reported && responsible == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+  record(@"helper-is-its-own-responsible-process", passed, @{
+    @"responsibleIsSelf" : B(responsible == pid),
+    @"reportedPermissionState" : [output containsString:@"\"active\""] ? @"active" : reported ? @"needs-permission" : @"none",
+    @"exitedCleanly" : B(WIFEXITED(status) && WEXITSTATUS(status) == 0)
+  });
+}
+
 // ---- Main -------------------------------------------------------------------
 
 static void finish(NSString *evidence_path, int status, NSString *note) {
@@ -561,6 +666,9 @@ int main(int argc, const char *argv[]) {
       return 64;
     }
     NSString *helper = [NSString stringWithUTF8String:argv[1]];
+    /* Scenarios drive the helper under this process's own Accessibility
+     * approval; scenario_disclaimed_helper checks the shipped default. */
+    setenv("KE_PEN_HOLD_INHERIT_RESPONSIBILITY", "1", 1);
     NSString *evidence_path = [NSString stringWithUTF8String:argv[2]];
     g_results = [NSMutableArray array];
     g_evidence = [NSMutableDictionary dictionaryWithDictionary:@{
@@ -647,6 +755,12 @@ int main(int argc, const char *argv[]) {
       scenario_disarm_mid_press();
       check_real_input();
       scenario_menu_stays_open();
+      check_real_input();
+      scenario_tap_timeout_keeps_held_press();
+      check_real_input();
+      scenario_tap_timeout_after_release_gives_click_back();
+      check_real_input();
+      scenario_disclaimed_helper(helper);
       check_real_input();
       scenario_eof_while_pending(helper);
       check_real_input();

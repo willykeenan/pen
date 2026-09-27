@@ -13,5 +13,8 @@ contextBridge.exposeInMainWorld(
     onPhase: (callback: (phase: string) => void) => {
       ipcRenderer.on("pen:phase", (_event, phase: string) => callback(phase));
     },
+    onShown: (callback: () => void) => {
+      ipcRenderer.on("pen:overlay-shown", () => callback());
+    },
   }),
 );

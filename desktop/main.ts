@@ -8,6 +8,7 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  powerMonitor,
   screen,
   shell,
   systemPreferences,
@@ -31,14 +32,22 @@ import {
   captureThumbnailSize,
   displayForPoint,
   matchCapturesToDisplays,
+  nativeCaptureSize,
+  needsNativeResize,
 } from "./display-capture-core.js";
 import {
+  formatHoldDelay,
+  HOLD_SETUP_IDLE_SECONDS,
+  HOLD_SETUP_WAIT_MS,
   holdCaptureSupported,
   holdDelayChoices,
+  holdDelayLabel,
   holdHelperPath,
+  holdSetupStep,
   overlayBaseline,
   runHoldFlow,
   shouldArmHold,
+  shouldOfferHoldSetup,
 } from "./hold-core.js";
 import { HoldHelperSupervisor, type HoldHelperStatus } from "./hold-helper.js";
 import {
@@ -93,10 +102,12 @@ const AGENT_DISPLAY_PROOF = process.argv
 const IS_AGENT_DISPLAY_PROOF = Boolean(AGENT_DISPLAY_PROOF);
 // Runtime proof for hold to capture: an isolated user-data directory, a fake
 // helper, an in-memory clipboard and no network. See scripts/verify-hold-proof.mjs.
-const HOLD_PROOF = process.argv
-  .find((argument) => argument.startsWith("--hold-proof="))
-  ?.slice("--hold-proof=".length);
-const IS_HOLD_PROOF = Boolean(HOLD_PROOF);
+// Development builds only: a packaged KE Pen never honours it, so nothing can
+// point an installed app at a different helper or user-data directory.
+const HOLD_PROOF = app.isPackaged
+  ? undefined
+  : process.argv.find((argument) => argument.startsWith("--hold-proof="))?.slice("--hold-proof=".length);
+const IS_HOLD_PROOF = Boolean(HOLD_PROOF) && !app.isPackaged;
 const HOLD_STATUS_FILE = "hold-status.json";
 const ACTIVATE_ON_START = process.argv.includes("--activate-on-start");
 const SHORTCUT = process.platform === "darwin" ? "Control+Alt+Command+P" : "Control+Alt+P";
@@ -153,9 +164,13 @@ let holdHelper: HoldHelperSupervisor | null = null;
 let holdStatus: HoldHelperStatus | null = null;
 let holdInFlight = false;
 let holdPermissionDialogOpen = false;
-let accessibilityWatchTimer: NodeJS.Timeout | null = null;
+let holdSetupTimer: NodeJS.Timeout | null = null;
+let holdAwaitingPermission = false;
 let holdProof: HoldProofState | null = null;
 const paintedOverlays = new Set<number>();
+const shownOverlays = new Set<number>();
+let revealOverlaysOnPaint = false;
+let overlayPointerDisplayId: number | null = null;
 let overlayPaintWaiter: (() => void) | null = null;
 
 interface HoldProofState {
@@ -201,7 +216,7 @@ if (IS_SMOKE_TEST) {
     cancelActiveRegionCapture();
     finishShotOverlay(null);
     closeOverlays();
-    stopAccessibilityWatch();
+    stopHoldSetupWait();
     void holdHelper?.stop();
     void agentDisplayBroker?.stop();
     void agentDisplays?.shutdown();
@@ -470,9 +485,14 @@ function startHoldCapture(): void {
       void writeHoldStatus(status);
       refreshHoldArm();
       if (previous !== status.state) updateTrayMenu();
-      if (status.state === "needs-permission") void maybeExplainHoldPermission();
+      if (status.state === "needs-permission") {
+        holdAwaitingPermission = true;
+        offerHoldSetupWhenIdle();
+      }
       if (status.state === "active") {
-        stopAccessibilityWatch();
+        stopHoldSetupWait();
+        if (holdAwaitingPermission && previous !== "active") announceHoldReady();
+        holdAwaitingPermission = false;
         void maybeAnnounceHoldCapture();
       }
     },
@@ -549,60 +569,110 @@ async function writeHoldStatus(status: HoldHelperStatus): Promise<void> {
   ).catch(() => undefined);
 }
 
-async function maybeExplainHoldPermission(): Promise<void> {
-  if (process.platform !== "darwin" || IS_HOLD_PROOF || !shot) return;
-  if (shot.settings.current.middleHoldPermissionExplained) return;
-  await explainHoldPermission();
+// macOS: the helper needs its own Accessibility approval. Nothing pops up the
+// moment KE Pen starts: the tray shows "allow in System Settings…", and the
+// one-time explanation waits until the person has been idle for a few
+// seconds, so it can never catch a keystroke meant for another app.
+function offerHoldSetupWhenIdle(): void {
+  if (IS_HOLD_PROOF || !shot || holdSetupTimer) return;
+  if (
+    !shouldOfferHoldSetup({
+      platform: process.platform,
+      state: holdStatus?.state ?? "stopped",
+      introducedVersion: shot.settings.current.middleHoldIntroduced,
+      appVersion: app.getVersion(),
+    })
+  ) {
+    return;
+  }
+  const giveUpAt = Date.now() + HOLD_SETUP_WAIT_MS;
+  holdSetupTimer = setInterval(() => {
+    if (holdStatus?.state !== "needs-permission" || Date.now() > giveUpAt) {
+      stopHoldSetupWait();
+      return;
+    }
+    const busy = phase !== "idle" || activating || holdInFlight || (shot?.busy() ?? false);
+    if (busy || powerMonitor.getSystemIdleTime() < HOLD_SETUP_IDLE_SECONDS) return;
+    stopHoldSetupWait();
+    void explainHoldPermission();
+  }, 1_000);
+}
+
+function stopHoldSetupWait(): void {
+  if (holdSetupTimer) clearInterval(holdSetupTimer);
+  holdSetupTimer = null;
 }
 
 // Windows needs no permission, so the feature (on by default) introduces
 // itself once instead, with where to turn it off.
 async function maybeAnnounceHoldCapture(): Promise<void> {
   if (process.platform !== "win32" || IS_HOLD_PROOF || !shot) return;
-  if (shot.settings.current.middleHoldPermissionExplained) return;
-  await shot.settings.update({ middleHoldPermissionExplained: true }).catch(() => undefined);
+  if (shot.settings.current.middleHoldIntroduced !== "") return;
+  await shot.settings.update({ middleHoldIntroduced: app.getVersion() }).catch(() => undefined);
   presentShotNotice(
     "Hold the middle button to capture",
-    "Hold the middle mouse button for half a second to freeze the screen and capture a region. " +
-      "Quick middle clicks still work. Turn it off or change the delay from the KE Pen tray menu.",
+    `Hold the middle mouse button for ${formatHoldDelay(shot.settings.current.middleHoldDelayMs)} to ` +
+      "freeze the screen and capture a region. A quick middle click still works; it lands when " +
+      "you let go. Turn it off or change how long to hold from the KE Pen tray menu.",
   );
 }
 
-// One plain explanation, then the exact System Settings pane. The helper
-// notices the approval on its own; nothing needs a relaunch.
+// macOS: once the approval arrives, say so, once.
+function announceHoldReady(): void {
+  if (process.platform !== "darwin" || IS_HOLD_PROOF || !shot) return;
+  presentShotNotice(
+    "Hold to capture is ready",
+    `Hold the middle mouse button for ${formatHoldDelay(shot.settings.current.middleHoldDelayMs)} ` +
+      "to freeze the screen and capture a region.",
+  );
+}
+
+// One plain explanation, then one system surface: macOS's own Accessibility
+// alert the first time for this version, the settings pane after that. The
+// helper notices the approval on its own; nothing needs a relaunch.
 async function explainHoldPermission(): Promise<void> {
   if (holdPermissionDialogOpen || !shot) return;
+  const runtime = shot;
   holdPermissionDialogOpen = true;
   try {
-    await shot.settings.update({ middleHoldPermissionExplained: true }).catch(() => undefined);
-    // KE Pen lives in the menu bar; without this the one-time explanation can
-    // open behind whatever the person is using and never be seen.
+    const version = app.getVersion();
+    const step = holdSetupStep(runtime.settings.current.middleHoldPrompted, version);
+    await runtime.settings.update({ middleHoldIntroduced: version }).catch(() => undefined);
+    const delay = formatHoldDelay(runtime.settings.current.middleHoldDelayMs);
+    // KE Pen lives in the menu bar; without this the explanation can open
+    // behind whatever the person is using. It only ever runs after they
+    // chose "Set up" or have been idle for a few seconds.
     if (process.platform === "darwin") app.focus({ steal: true });
     const { response } = await dialog.showMessageBox({
       type: "info",
       title: "KE Pen",
       message: "Hold the middle mouse button to capture",
       detail:
-        "Hold the middle mouse button for half a second and KE Pen freezes the screen — open " +
-        "menus included — so you can drag a region to capture. A quick middle click still " +
-        "works exactly as before.\n\n" +
-        "To hold that one button back from the app under the pointer, macOS asks you to allow " +
-        "KE Pen in System Settings › Privacy & Security › Accessibility. KE Pen only ever " +
-        "watches the middle mouse button: never the keyboard, never other buttons, and it " +
-        "never records where you click.\n\n" +
-        "If KE Pen already shows as allowed there, that switch belongs to an older build — " +
-        "turn it off and back on.",
-      buttons: ["Open System Settings", "Not now", "Turn off hold-to-capture"],
+        `Hold the middle mouse button for ${delay} and KE Pen freezes the screen, open menus ` +
+        "included, so you can drag out a capture. A quick middle click still works; it just " +
+        "lands when you let go.\n\n" +
+        "So a menu stays open while you hold, a small KE Pen helper has to catch the middle " +
+        "button before other apps see it. macOS calls this Accessibility: choose Continue, then " +
+        "allow \u201cke-pen-hold-helper\u201d in System Settings \u203a Privacy & Security \u203a " +
+        "Accessibility. The helper only watches the middle button, never the keyboard or other " +
+        "buttons, and never saves, sends or logs where you click." +
+        (step === "open-settings"
+          ? "\n\nIf ke-pen-hold-helper is already listed and switched on, that entry belongs to " +
+            "an older version: select it, remove it with \u2212, then choose Set up again from " +
+            "the KE Pen menu."
+          : ""),
+      buttons: ["Continue", "Not now", "Turn off hold to capture"],
       defaultId: 0,
       cancelId: 1,
     });
     if (response === 0) {
-      // Asking once with the prompt flag is what lists KE Pen in that pane.
-      systemPreferences.isTrustedAccessibilityClient(true);
-      await shell.openExternal(
-        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-      );
-      watchForAccessibilityGrant();
+      if (step === "prompt" && holdHelper?.requestPermissionPrompt()) {
+        await runtime.settings.update({ middleHoldPrompted: version }).catch(() => undefined);
+      } else {
+        await shell.openExternal(
+          "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+        );
+      }
     } else if (response === 2) {
       applyShotSetting({ middleHoldCapture: false });
     }
@@ -610,30 +680,6 @@ async function explainHoldPermission(): Promise<void> {
     holdPermissionDialogOpen = false;
     updateTrayMenu();
   }
-}
-
-// The helper polls for the approval itself. This is the backstop: once macOS
-// reports KE Pen trusted, a helper still waiting is restarted. Gives up
-// quietly after five minutes.
-function watchForAccessibilityGrant(): void {
-  stopAccessibilityWatch();
-  let ticks = 0;
-  accessibilityWatchTimer = setInterval(() => {
-    ticks += 1;
-    if (systemPreferences.isTrustedAccessibilityClient(false)) {
-      stopAccessibilityWatch();
-      setTimeout(() => {
-        if (holdStatus?.state === "needs-permission") holdHelper?.restart();
-      }, 2_500);
-    } else if (ticks > 150) {
-      stopAccessibilityWatch();
-    }
-  }, 2_000);
-}
-
-function stopAccessibilityWatch(): void {
-  if (accessibilityWatchTimer) clearInterval(accessibilityWatchTimer);
-  accessibilityWatchTimer = null;
 }
 
 // ---- Hold runtime proof (--hold-proof=<dir>) ----------------------------------
@@ -751,9 +797,10 @@ async function runHoldProof(): Promise<void> {
       alwaysOnTop: context.window.isAlwaysOnTop(),
       scaleFactor: context.display.scaleFactor,
       capturePixels: pixels,
+      // Exactly the display's own pixels: never below, and never upscaled.
       capturedAtNativeResolution:
-        pixels.width >= Math.floor(context.display.size.width * context.display.scaleFactor) &&
-        pixels.height >= Math.floor(context.display.size.height * context.display.scaleFactor),
+        pixels.width === nativeCaptureSize(context.display).width &&
+        pixels.height === nativeCaptureSize(context.display).height,
     };
   });
   const frozenFacts = await Promise.all(
@@ -764,9 +811,10 @@ async function runHoldProof(): Promise<void> {
           const canvas = document.getElementById("ink");
           const pixel = canvas.getContext("2d").getImageData(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1).data;
           return { frozen: document.body.dataset.frozen === "true", opaqueCentre: pixel[3] === 255,
-                   badge: document.getElementById("badge-detail").textContent };
+                   badge: document.getElementById("badge-detail").textContent,
+                   title: document.getElementById("badge-title").textContent };
         })()`,
-        { frozen: false, opaqueCentre: false, badge: "no answer" },
+        { frozen: false, opaqueCentre: false, badge: "no answer", title: "no answer" },
       ),
     ),
   );
@@ -775,6 +823,10 @@ async function runHoldProof(): Promise<void> {
   expect(proof.overlayLevel === "screen-saver", "the frozen overlay was not raised to the screen-saver level");
   expect(frozenFacts.every((entry) => entry.frozen && entry.opaqueCentre), "an overlay did not draw the frozen screen");
   expect(helper.isArmed === false, "the helper stayed armed while the frozen selector was open");
+  expect(
+    geometry.every((entry) => entry.capturedAtNativeResolution),
+    `a frozen frame was not the display's native size: ${JSON.stringify(geometry)}`,
+  );
 
   // Select a region on the display under the cursor, through the same bridge
   // the renderer uses.
@@ -839,6 +891,27 @@ async function runHoldProof(): Promise<void> {
   await waitFor(() => proof.runsCompleted >= 2, 10_000, "the cancel");
   holdProofTrace("cancelled");
   expect(proof.clipboardImages.length === 1, "Escape still put something on the clipboard");
+
+  // Hold #3: a right click cancels too, for when Escape cannot reach the
+  // overlay (Windows focus rules), again with nothing copied.
+  await waitFor(() => proof.holdsReceived >= 3, 8_000, "the third hold");
+  await waitFor(() => overlays.size === expectedOverlays && pendingShotRegion !== null, 10_000, "the third overlays");
+  const third = [...overlays.values()];
+  await waitForAsync(async () => {
+    const ready = await Promise.all(
+      third.map((context) => evaluateIn(context.window, "document.body.dataset.ready === 'true'", false)),
+    );
+    return ready.every(Boolean);
+  }, 10_000, "the third overlay renderers");
+  holdProofTrace("right-click");
+  await evaluateIn(
+    third[0]!.window,
+    "document.getElementById('ink').dispatchEvent(new PointerEvent('pointerdown', { button: 2, pointerId: 7, bubbles: true }))",
+    false,
+  );
+  await waitFor(() => proof.runsCompleted >= 3, 10_000, "the right-click cancel");
+  holdProofTrace("right-click-cancelled");
+  expect(proof.clipboardImages.length === 1, "a right click still put something on the clipboard");
   await waitFor(() => helper.isArmed, 3_000, "re-arming after the cancel").catch(() => {
     failures.push("the helper was not re-armed after the selector closed");
   });
@@ -850,16 +923,30 @@ async function runHoldProof(): Promise<void> {
   const holdIndex = index("hold-received");
   const captureComplete = index("capture-complete", holdIndex);
   const firstOverlay = index("overlay-created", holdIndex);
-  const firstShow = index("overlay-show", holdIndex);
+  const firstShow = proof.trace.findIndex(
+    (entry, position) => position >= holdIndex && entry.event.startsWith("overlay-show:"),
+  );
   const firstFocus = index("focus", holdIndex);
   const trayBeforeFreeze = proof.trace
     .slice(holdIndex, captureComplete)
     .some((entry) => entry.event === "tray-update");
   const painted = index("overlays-painted", holdIndex);
+  // Every overlay of the first hold is shown only after its own frozen frame
+  // was drawn (each display goes up as soon as it is ready).
+  const firstRunEnd = index("region-submit", holdIndex);
+  const firstRun = proof.trace.slice(holdIndex, firstRunEnd < 0 ? undefined : firstRunEnd);
+  const shows = firstRun.filter((entry) => entry.event.startsWith("overlay-show:"));
+  const eachPaintedBeforeShown =
+    shows.length === expectedOverlays &&
+    shows.every((show) => {
+      const id = show.event.slice("overlay-show:".length);
+      const paintedAt = firstRun.findIndex((entry) => entry.event === `overlay-painted:${id}`);
+      return paintedAt >= 0 && paintedAt < firstRun.indexOf(show);
+    });
   const ordering = {
     captureBeforeOverlayCreated: captureComplete >= 0 && captureComplete < firstOverlay,
     captureBeforeOverlayShown: captureComplete >= 0 && captureComplete < firstShow,
-    frozenFramePaintedBeforeShown: painted >= 0 && painted < firstShow,
+    frozenFramePaintedBeforeShown: eachPaintedBeforeShown,
     showBeforeFocus: firstShow >= 0 && firstShow < firstFocus,
     noTrayRebuildBeforeFreeze: !trayBeforeFreeze,
   };
@@ -876,6 +963,7 @@ async function runHoldProof(): Promise<void> {
     geometry,
     frozenOverlay: frozenFacts.map((entry) => ({ frozen: entry.frozen, opaqueCentre: entry.opaqueCentre })),
     badge: frozenFacts[0]?.badge ?? null,
+    badgeTitle: frozenFacts[0]?.title ?? null,
     overlayLevel: proof.overlayLevel,
     ordering,
     timingsMs: {
@@ -890,6 +978,7 @@ async function runHoldProof(): Promise<void> {
     localCopies: localCopies.length,
     localCopyMode,
     escapeMethod: proof.show ? "sendInputEvent" : "dom-keydown",
+    rightClickCancelled: proof.runsCompleted >= 3 && proof.clipboardImages.length === 1,
     holdsReceived: proof.holdsReceived,
     notices: proof.notices,
     trace: proof.trace,
@@ -931,7 +1020,7 @@ async function updateShotSettings(patch: Partial<ShotSettings>): Promise<void> {
   if (patch.middleHoldCapture !== undefined) {
     if (next.middleHoldCapture) holdHelper?.start();
     else {
-      stopAccessibilityWatch();
+      stopHoldSetupWait();
       await holdHelper?.stop();
     }
   }
@@ -1006,6 +1095,7 @@ function registerIpc(): void {
             ? context.capture.toDataURL()
             : "",
       frozen: baseline === "frozen-jpeg",
+      pointerDisplay: overlayPointerDisplayId === null || overlayPointerDisplayId === context.display.id,
       shortcut: baseline === "frozen-jpeg" ? "" : isShot ? shotShortcutLabel : SHORTCUT_LABEL,
     };
   });
@@ -1110,6 +1200,10 @@ function registerIpc(): void {
     const context = overlays.get(event.sender.id);
     if (!context || context.window.isDestroyed()) return;
     paintedOverlays.add(event.sender.id);
+    holdProofTrace(`overlay-painted:${event.sender.id}`);
+    // Frozen selector: each display goes up as soon as its own frozen frame is
+    // drawn, the pointer's display first, without waiting for the others.
+    if (revealOverlaysOnPaint) revealOverlay(event.sender.id, context.window);
     overlayPaintWaiter?.();
   });
 
@@ -1136,8 +1230,9 @@ function shotOwnsTheScreen(): boolean {
 }
 
 async function activatePen(): Promise<void> {
-  if (phase !== "idle" || activating || shotOwnsTheScreen()) return;
-  activating = true;
+  // A hold capture in flight owns the screen from its freeze to its selector.
+  if (phase !== "idle" || activating || holdInFlight || shotOwnsTheScreen()) return;
+  setActivating(true);
   try {
     if (!(await ensureScreenAccess())) return;
     const captures = await captureDisplays();
@@ -1169,7 +1264,7 @@ async function activatePen(): Promise<void> {
     setPhase("idle");
     await showError(error);
   } finally {
-    activating = false;
+    setActivating(false);
   }
 }
 
@@ -1185,7 +1280,7 @@ interface ShotOverlayOptions {
 // windows on every platform, over the frozen screen it captured first.
 async function captureShotRegionWithOverlay(options: ShotOverlayOptions = {}): Promise<Buffer | null> {
   if (phase !== "idle" || activating) return null;
-  activating = true;
+  setActivating(true);
   const frozen = options.showFrozen === true && options.frozen !== undefined;
   try {
     const captures = options.frozen ?? (await captureDisplays());
@@ -1199,18 +1294,29 @@ async function captureShotRegionWithOverlay(options: ShotOverlayOptions = {}): P
     overlayFrozen = frozen;
     activeDisplayId = null;
     currentAnnotationId = null;
+    const cursorDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+    overlayPointerDisplayId = cursorDisplay.id;
     setPhase("drawing");
     paintedOverlays.clear();
-    for (const capture of captures) {
-      await createOverlay(capture.display, capture.image, { frozen });
+    shownOverlays.clear();
+    // The display under the pointer is created, drawn and shown first.
+    const ordered = [...captures].sort(
+      (a, b) => Number(b.display.id === cursorDisplay.id) - Number(a.display.id === cursorDisplay.id),
+    );
+    // Nothing is shown and no focus moves until a display's frozen frame is
+    // drawn, so an open menu stays open until the frozen copy covers it.
+    revealOverlaysOnPaint = frozen;
+    try {
+      for (const capture of ordered) {
+        await createOverlay(capture.display, capture.image, { frozen });
+      }
+      if (frozen) await waitForOverlaysPainted(1_500);
+    } finally {
+      revealOverlaysOnPaint = false;
     }
-    // Nothing is shown and no focus moves until every frozen frame is drawn,
-    // so an open menu stays open until the frozen copy covers it.
-    if (frozen) await waitForOverlaysPainted(1_500);
-    for (const context of overlays.values()) {
-      showOverlayInactive(context.window);
+    for (const [id, context] of overlays) {
+      revealOverlay(id, context.window);
     }
-    const cursorDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
     const focusWindow = [...overlays.values()].find(
       (context) => context.display.id === cursorDisplay.id,
     )?.window;
@@ -1224,9 +1330,15 @@ async function captureShotRegionWithOverlay(options: ShotOverlayOptions = {}): P
     finishShotOverlay(null);
     throw error;
   } finally {
-    activating = false;
-    refreshHoldArm();
+    setActivating(false);
   }
+}
+
+// Middle clicks must pass straight through from the moment an overlay starts
+// coming up, so the helper is disarmed before any capture or window work.
+function setActivating(value: boolean): void {
+  activating = value;
+  refreshHoldArm();
 }
 
 function finishShotOverlay(region: Buffer | null): void {
@@ -1238,6 +1350,8 @@ function finishShotOverlay(region: Buffer | null): void {
   activeDisplayId = null;
   overlayMode = "pen";
   overlayFrozen = false;
+  overlayPointerDisplayId = null;
+  shownOverlays.clear();
   setPhase("idle");
   if (wasFrozen) handFocusBack();
   resolve?.(region);
@@ -1273,8 +1387,16 @@ function waitForOverlaysPainted(timeoutMs: number): Promise<void> {
   });
 }
 
-function showOverlayInactive(window: BrowserWindow): void {
-  holdProofTrace("overlay-show");
+function revealOverlay(id: number, window: BrowserWindow): void {
+  if (shownOverlays.has(id) || window.isDestroyed()) return;
+  shownOverlays.add(id);
+  showOverlayInactive(id, window);
+  // Starts the frozen frame's dim fade-in from the moment it is on screen.
+  window.webContents.send("pen:overlay-shown");
+}
+
+function showOverlayInactive(id: number, window: BrowserWindow): void {
+  holdProofTrace(`overlay-show:${id}`);
   if (holdProof && !holdProof.show) return;
   window.showInactive();
 }
@@ -1357,11 +1479,18 @@ async function captureDisplays(): Promise<CapturedDisplay[]> {
     thumbnailSize: captureThumbnailSize(displays),
     fetchWindowIcons: false,
   });
+  // Every screen is fitted into one shared thumbnail size, which upscales a
+  // lower-resolution display beside a Retina one. Bring each frame back to
+  // that display's own pixels so a capture there is native size, not larger.
   return matchCapturesToDisplays(
     displays,
     sources,
     screen.getPrimaryDisplay().id,
     (image) => image.isEmpty(),
+  ).map((capture) =>
+    needsNativeResize(capture.image.getSize(), capture.display)
+      ? { ...capture, image: capture.image.resize({ ...nativeCaptureSize(capture.display), quality: "best" }) }
+      : capture,
   );
 }
 
@@ -1657,7 +1786,7 @@ function holdMenuItems(settings: ShotSettings): MenuItemConstructorOptions[] {
   if (!holdCaptureSupported(process.platform)) return [];
   const delays: MenuItemConstructorOptions[] = holdDelayChoices(settings.middleHoldDelayMs).map(
     (ms) => ({
-      label: HOLD_DELAY_LABELS[ms] ?? `${ms} ms (custom)`,
+      label: holdDelayLabel(ms),
       type: "radio",
       checked: settings.middleHoldDelayMs === ms,
       click: () => applyShotSetting({ middleHoldDelayMs: ms }),
@@ -1668,39 +1797,27 @@ function holdMenuItems(settings: ShotSettings): MenuItemConstructorOptions[] {
       label: "Hold middle button to capture",
       type: "checkbox",
       checked: settings.middleHoldCapture,
-      toolTip:
-        "Hold the middle mouse button to freeze the screen — open menus included — and drag " +
-        "a region. A quick middle click still works as usual.",
       click: () => applyShotSetting({ middleHoldCapture: !settings.middleHoldCapture }),
     },
-    { label: "Hold delay", enabled: settings.middleHoldCapture, submenu: delays },
+    { label: "How long to hold", enabled: settings.middleHoldCapture, submenu: delays },
   ];
   if (!settings.middleHoldCapture) return items;
   const state = holdStatus?.state;
   if (state === "needs-permission") {
     items.push({
-      label: "Hold-to-capture needs Accessibility…",
+      label: "Hold to capture: allow in System Settings…",
       click: () => void explainHoldPermission(),
     });
   } else if (state === "failed") {
     items.push({
-      label: "Hold-to-capture stopped — Restart",
+      label: "Hold to capture stopped — Restart",
       click: () => holdHelper?.restart(),
     });
   } else if (state === "unavailable") {
-    items.push({ label: "Hold-to-capture is unavailable in this build", enabled: false });
+    items.push({ label: "Hold to capture isn't available in this build", enabled: false });
   }
   return items;
 }
-
-const HOLD_DELAY_LABELS: Record<number, string> = {
-  200: "200 ms — fastest",
-  350: "350 ms",
-  500: "500 ms — default",
-  750: "750 ms",
-  1000: "1 second",
-  1500: "1.5 seconds",
-};
 
 function confirmDeleteShot(entry: ShotHistoryEntry): void {
   void (async () => {

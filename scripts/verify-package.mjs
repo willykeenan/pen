@@ -47,6 +47,8 @@ await access(serverPath);
 await verifyBridge(executable, serverPath, { ELECTRON_RUN_AS_NODE: "1" }, "installed app");
 
 if (platform === "darwin" || platform === "win32") await verifyHoldHelper(executable, platform);
+await verifyFuses(executable, platform);
+if (platform === "darwin") verifyMacSignature(executable);
 
 if (platform === "linux") {
   const appImage = await findAppImage();
@@ -175,6 +177,70 @@ async function verifyHoldHelper(packagedExecutable, targetPlatform) {
     `Verified packaged hold helper: ${path.relative(root, helper)} (${handshake.lines
       .map((line) => line.type)
       .join(" → ")})\n`,
+  );
+}
+
+// Electron fuses baked into the packaged binary (every slice of a universal
+// build). runAsNode stays on for the embedded MCP server; every other way to
+// run code as KE Pen is off.
+async function verifyFuses(packagedExecutable, targetPlatform) {
+  const binary =
+    targetPlatform === "darwin"
+      ? path.resolve(packagedExecutable, "..", "..", "Frameworks", "Electron Framework.framework", "Electron Framework")
+      : packagedExecutable;
+  const bytes = await readFile(binary);
+  const sentinel = Buffer.from("dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX");
+  const wires = [];
+  for (let at = bytes.indexOf(sentinel); at >= 0; at = bytes.indexOf(sentinel, at + 1)) {
+    const start = at + sentinel.length;
+    const length = bytes[start + 1];
+    wires.push([...bytes.subarray(start + 2, start + 2 + length)].map((value) => String.fromCharCode(value)));
+  }
+  assert.ok(wires.length >= 1, "no Electron fuse wire was found in the packaged binary");
+  if (targetPlatform === "darwin") assert.equal(wires.length, 2, "both slices of the universal binary carry fuses");
+  const expected = { 0: "1", 2: "0", 3: "0", 5: "1" };
+  const names = { 0: "RunAsNode", 2: "EnableNodeOptionsEnvironmentVariable", 3: "EnableNodeCliInspectArguments", 5: "OnlyLoadAppFromAsar" };
+  for (const wire of wires) {
+    for (const [index, value] of Object.entries(expected)) {
+      assert.equal(wire[Number(index)], value, `fuse ${names[index]} is ${wire[Number(index)]}, expected ${value}`);
+    }
+  }
+  process.stdout.write(
+    `Verified Electron fuses (${wires.length} wire${wires.length === 1 ? "" : "s"}): RunAsNode on for the MCP bridge; NODE_OPTIONS, --inspect off; app only from asar\n`,
+  );
+}
+
+// The whole bundle is signed (not just the linker-signed executable), and the
+// hold helper carries its own identifier, hardened runtime and the same
+// signing authority as the app.
+function verifyMacSignature(packagedExecutable) {
+  const app = path.resolve(packagedExecutable, "..", "..", "..");
+  const helper = path.join(path.dirname(packagedExecutable), "ke-pen-hold-helper");
+  const deep = spawnSync("codesign", ["--verify", "--deep", "--strict", "--verbose=2", app], { encoding: "utf8" });
+  assert.equal(deep.status, 0, `app bundle signature: ${deep.stderr}`);
+  const describe = (target) => {
+    const result = spawnSync("codesign", ["-dvv", target], { encoding: "utf8" });
+    assert.equal(result.status, 0, `codesign -dvv ${target}: ${result.stderr}`);
+    const text = result.stderr;
+    const field = (name) => text.match(new RegExp(`^${name}=(.*)$`, "m"))?.[1] ?? null;
+    return {
+      identifier: field("Identifier"),
+      authority: field("Authority"),
+      adhoc: /^Signature=adhoc$/m.test(text),
+      runtime: /flags=0x[0-9a-f]+\([^)]*runtime[^)]*\)/.test(text),
+      sealed: /^Sealed Resources/m.test(text),
+    };
+  };
+  const appInfo = describe(app);
+  const helperInfo = describe(helper);
+  assert.equal(appInfo.identifier, "dev.kestudios.pen", "app identifier");
+  assert.equal(appInfo.sealed, true, "the app bundle's resources are sealed");
+  assert.equal(helperInfo.identifier, "dev.kestudios.pen.hold-helper", "hold helper identifier");
+  assert.equal(helperInfo.runtime, true, "the hold helper uses the hardened runtime");
+  assert.equal(helperInfo.adhoc, appInfo.adhoc, "the helper and the app are signed the same way");
+  assert.equal(helperInfo.authority, appInfo.authority, "the helper and the app share a signing authority");
+  process.stdout.write(
+    `Verified macOS signatures: bundle sealed, helper ${helperInfo.identifier} (${appInfo.adhoc ? "ad hoc" : appInfo.authority})\n`,
   );
 }
 

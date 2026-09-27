@@ -37,15 +37,63 @@ export function holdDelayChoices(current: number): number[] {
   return choices.sort((a, b) => a - b);
 }
 
+// "0.5 s", "1 s", "0.35 s": one unit everywhere the delay is shown.
+export function formatHoldDelay(ms: number): string {
+  const seconds = clampHoldDelay(ms) / 1000;
+  return `${Number(seconds.toFixed(2))} s`;
+}
+
+// Tray labels. At 0.2 s ordinary slow clicks start turning into captures, so
+// that choice says so instead of reading as a recommendation.
+export function holdDelayLabel(ms: number): string {
+  const text = formatHoldDelay(ms);
+  if (ms === HOLD_MIN_DELAY_MS) return `${text} (may catch slow clicks)`;
+  if (ms === HOLD_DEFAULT_DELAY_MS) return `${text} (default)`;
+  return text;
+}
+
+// ---- macOS setup ------------------------------------------------------------------
+
+// macOS shows its own Accessibility alert (which also lists the helper in
+// System Settings) only for code it has not seen. Once KE Pen has asked for
+// this version, "Continue" opens the settings pane directly instead, so the
+// person never gets two system surfaces at once.
+export type HoldSetupStep = "prompt" | "open-settings";
+
+export function holdSetupStep(promptedVersion: string, appVersion: string): HoldSetupStep {
+  return promptedVersion === appVersion ? "open-settings" : "prompt";
+}
+
+// The one-time explanation waits until the person has stopped typing and
+// clicking for a few seconds, so it never catches a keystroke meant for
+// something else. It is only offered automatically once per version.
+export const HOLD_SETUP_IDLE_SECONDS = 3;
+export const HOLD_SETUP_WAIT_MS = 10 * 60_000;
+
+export function shouldOfferHoldSetup(input: {
+  platform: NodeJS.Platform;
+  state: string;
+  introducedVersion: string;
+  appVersion: string;
+}): boolean {
+  return (
+    input.platform === "darwin" &&
+    input.state === "needs-permission" &&
+    input.introducedVersion !== input.appVersion
+  );
+}
+
 // ---- Protocol -----------------------------------------------------------------
 
-// The helper accepts these four commands and nothing else. None of them can
+// The helper accepts these five commands and nothing else. None of them can
 // carry a position, a button or an event description, so writing to the
-// helper's stdin can never make it post input of anyone's choosing.
+// helper's stdin can never make it post input of anyone's choosing. "prompt"
+// asks macOS to show its own Accessibility alert for the helper.
 export type HoldCommand =
   | { cmd: "config"; thresholdMs: number }
   | { cmd: "arm" }
   | { cmd: "disarm" }
+  | { cmd: "prompt" }
   | { cmd: "quit" };
 
 export function encodeHoldCommand(command: HoldCommand): string {
@@ -56,6 +104,8 @@ export function encodeHoldCommand(command: HoldCommand): string {
       return `{"cmd":"arm"}\n`;
     case "disarm":
       return `{"cmd":"disarm"}\n`;
+    case "prompt":
+      return `{"cmd":"prompt"}\n`;
     case "quit":
       return `{"cmd":"quit"}\n`;
   }

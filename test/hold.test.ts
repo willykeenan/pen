@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -8,24 +9,40 @@ import {
   captureThumbnailSize,
   displayForPoint,
   matchCapturesToDisplays,
+  nativeCaptureSize,
+  needsNativeResize,
   type CaptureDisplay,
 } from "../desktop/display-capture-core.js";
 import {
+  badgeCorner,
+  FROZEN_DIM_FADE_MS,
+  FROZEN_IDLE_CANCEL_MS,
+  frozenDimAlpha,
+  regionPointerAction,
+  SELECTOR_DIM_ALPHA,
+  shotBadgeDetail,
+  startsPenStroke,
+} from "../desktop/overlay-core.js";
+import {
   clampHoldDelay,
   encodeHoldCommand,
+  formatHoldDelay,
   HOLD_DEFAULT_DELAY_MS,
   HOLD_LINE_MAX,
   HOLD_RESTART_DELAYS_MS,
   HOLD_READY_TIMEOUT_MS,
   holdCaptureSupported,
   holdDelayChoices,
+  holdDelayLabel,
   holdHelperPath,
   HoldLineSplitter,
+  holdSetupStep,
   overlayBaseline,
   parseHoldMessage,
   planHoldRestart,
   runHoldFlow,
   shouldArmHold,
+  shouldOfferHoldSetup,
   type HoldArmInput,
 } from "../desktop/hold-core.js";
 import {
@@ -45,7 +62,8 @@ test("hold to capture is on by default where it is supported and never on Linux"
   const mac = defaultSettings(PICTURES, "darwin");
   assert.equal(mac.middleHoldCapture, true);
   assert.equal(mac.middleHoldDelayMs, 500);
-  assert.equal(mac.middleHoldPermissionExplained, false);
+  assert.equal(mac.middleHoldIntroduced, "");
+  assert.equal(mac.middleHoldPrompted, "");
   assert.equal(defaultSettings(PICTURES, "win32").middleHoldCapture, true);
   assert.equal(defaultSettings(PICTURES, "linux").middleHoldCapture, false);
   assert.equal(holdCaptureSupported("darwin"), true);
@@ -74,12 +92,20 @@ test("hold delay settings are clamped to 200–1500 ms and hostile values fall b
   assert.equal(read(Number.NaN), 500);
   assert.equal(read(null), 500);
   const off = normalizeSettings(
-    { middleHoldCapture: false, middleHoldPermissionExplained: true },
+    { middleHoldCapture: false, middleHoldIntroduced: "0.6.0", middleHoldPrompted: "0.6.0" },
     defaults,
     "darwin",
   );
   assert.equal(off.middleHoldCapture, false);
-  assert.equal(off.middleHoldPermissionExplained, true);
+  assert.equal(off.middleHoldIntroduced, "0.6.0");
+  assert.equal(off.middleHoldPrompted, "0.6.0");
+  const marks = normalizeSettings(
+    { middleHoldIntroduced: 7, middleHoldPrompted: "0.6.0\u0000; rm -rf /" },
+    defaults,
+    "darwin",
+  );
+  assert.equal(marks.middleHoldIntroduced, "");
+  assert.equal(marks.middleHoldPrompted, "");
   const hostile = normalizeSettings({ middleHoldCapture: "yes" }, defaults, "win32");
   assert.equal(hostile.middleHoldCapture, true);
   assert.equal(clampHoldDelay(undefined), HOLD_DEFAULT_DELAY_MS);
@@ -110,8 +136,9 @@ test("the settings store persists hold settings without rewriting other keys", a
 
 // ---- Protocol -------------------------------------------------------------------
 
-test("commands encode to the helper's four fixed lines, with the delay clamped", () => {
+test("commands encode to the helper's five fixed lines, with the delay clamped", () => {
   assert.equal(encodeHoldCommand({ cmd: "arm" }), '{"cmd":"arm"}\n');
+  assert.equal(encodeHoldCommand({ cmd: "prompt" }), '{"cmd":"prompt"}\n');
   assert.equal(encodeHoldCommand({ cmd: "disarm" }), '{"cmd":"disarm"}\n');
   assert.equal(encodeHoldCommand({ cmd: "quit" }), '{"cmd":"quit"}\n');
   assert.equal(encodeHoldCommand({ cmd: "config", thresholdMs: 750 }), '{"cmd":"config","thresholdMs":750}\n');
@@ -435,6 +462,133 @@ test("the hold flow stops before freezing without access and fails without displ
   assert.equal(selected, false);
 });
 
+// ---- Wording and setup rules ---------------------------------------------------------
+
+test("the hold delay is shown in one unit, and 0.2 s says it may catch slow clicks", () => {
+  assert.equal(formatHoldDelay(500), "0.5 s");
+  assert.equal(formatHoldDelay(1000), "1 s");
+  assert.equal(formatHoldDelay(350), "0.35 s");
+  assert.equal(formatHoldDelay(1500), "1.5 s");
+  assert.equal(formatHoldDelay(50), "0.2 s");
+  assert.deepEqual(holdDelayChoices(500).map(holdDelayLabel), [
+    "0.2 s (may catch slow clicks)",
+    "0.35 s",
+    "0.5 s (default)",
+    "0.75 s",
+    "1 s",
+    "1.5 s",
+  ]);
+  assert.equal(holdDelayLabel(420), "0.42 s");
+});
+
+test("macOS setup asks macOS once per version, then opens the settings pane", () => {
+  assert.equal(holdSetupStep("", "0.6.0"), "prompt");
+  assert.equal(holdSetupStep("0.5.9", "0.6.0"), "prompt");
+  assert.equal(holdSetupStep("0.6.0", "0.6.0"), "open-settings");
+  const offer = (state: string, introducedVersion: string, platform: NodeJS.Platform = "darwin") =>
+    shouldOfferHoldSetup({ platform, state, introducedVersion, appVersion: "0.6.0" });
+  assert.equal(offer("needs-permission", ""), true);
+  assert.equal(offer("needs-permission", "0.5.9"), true, "a new version needs a fresh approval");
+  assert.equal(offer("needs-permission", "0.6.0"), false, "offered automatically once per version");
+  assert.equal(offer("active", ""), false);
+  assert.equal(offer("needs-permission", "", "win32"), false);
+});
+
+test("mixed-DPI frames are brought to each display's own pixels, so crops are native size", () => {
+  // desktopCapturer letterbox-fits every screen into the one shared size.
+  const shared = captureThumbnailSize([RETINA, LEFT_1X]);
+  const scale = Math.min(shared.width / 1920, shared.height / 1080);
+  const fitted = { width: Math.round(1920 * scale), height: Math.round(1080 * scale) };
+  assert.deepEqual(fitted, { width: 2880, height: 1620 });
+  assert.equal(needsNativeResize(fitted, LEFT_1X), true);
+  assert.deepEqual(nativeCaptureSize(LEFT_1X), { width: 1920, height: 1080 });
+  assert.equal(needsNativeResize({ width: 2880, height: 1800 }, RETINA), false);
+  const native = nativeCaptureSize(LEFT_1X);
+  const crop = computeRegionCropPixels({
+    rect: { x: 10, y: 20, width: 200, height: 100 },
+    displayWidth: 1920,
+    displayHeight: 1080,
+    imageWidth: native.width,
+    imageHeight: native.height,
+  });
+  assert.deepEqual({ width: crop.width, height: crop.height }, { width: 200, height: 100 });
+});
+
+// ---- Overlay pointer rules --------------------------------------------------------------
+
+test("only a primary-button stroke draws Pen ink; middle and right presses never do", () => {
+  assert.equal(startsPenStroke(0), true);
+  assert.equal(startsPenStroke(1), false);
+  assert.equal(startsPenStroke(2), false);
+  assert.equal(startsPenStroke(3), false);
+  // The renderer really uses the rule, first thing in the Pen pointer handler.
+  const renderer = readFileSync(new URL("../desktop/renderer.ts", import.meta.url), "utf8");
+  const handler = renderer.slice(renderer.indexOf("function handlePointerDown("));
+  const firstLines = handler.split("\n").slice(0, 5).join("\n");
+  assert.match(firstLines, /if \(!startsPenStroke\(event\.button\)\) return;/);
+});
+
+test("in the KE Shot selector a right or middle click cancels and only the primary button selects", () => {
+  assert.equal(regionPointerAction(0), "select");
+  assert.equal(regionPointerAction(1), "cancel");
+  assert.equal(regionPointerAction(2), "cancel");
+  assert.equal(regionPointerAction(3), "ignore");
+  const renderer = readFileSync(new URL("../desktop/renderer.ts", import.meta.url), "utf8");
+  const handler = renderer.slice(renderer.indexOf("function handleRegionPointerDown("));
+  assert.match(handler.slice(0, 900), /regionPointerAction\(event\.button\)[\s\S]*window\.kePen\.cancel\(\)/);
+});
+
+test("the frozen frame appears undimmed, fades in, and closes itself after a quiet minute", () => {
+  assert.equal(frozenDimAlpha(null), 0);
+  assert.equal(frozenDimAlpha(0), 0);
+  assert.ok(Math.abs(frozenDimAlpha(FROZEN_DIM_FADE_MS / 2) - SELECTOR_DIM_ALPHA / 2) < 1e-9);
+  assert.equal(frozenDimAlpha(FROZEN_DIM_FADE_MS), SELECTOR_DIM_ALPHA);
+  assert.equal(frozenDimAlpha(10_000), SELECTOR_DIM_ALPHA);
+  assert.equal(FROZEN_IDLE_CANCEL_MS, 60_000);
+});
+
+test("the selector badge names each cancel path once and stays off what you point at", () => {
+  const detail = (patch: Partial<Parameters<typeof shotBadgeDetail>[0]>) =>
+    shotBadgeDetail({ frozen: true, pointerDisplay: true, selection: null, shortcut: "⌘⇧2", ...patch });
+  assert.equal(detail({}), "Drag to capture · Esc or click to cancel");
+  assert.equal(detail({ frozen: false }), "Drag to capture · Esc or click to cancel · ⌘⇧2");
+  assert.equal(detail({ pointerDisplay: false }), "Esc or click to cancel");
+  assert.equal(detail({ selection: { width: 200.4, height: 99.6 } }), "200 × 100 · release to capture");
+  assert.doesNotMatch(detail({}), /FROZEN/);
+
+  const viewport = { width: 1440, height: 900 };
+  const badge = { width: 245, height: 55 };
+  assert.equal(badgeCorner("top-left", [{ x: 700, y: 450 }], viewport, badge), "top-left");
+  // Aiming at the menu bar, just under the badge: it moves out of the way.
+  assert.equal(badgeCorner("top-left", [{ x: 60, y: 90 }], viewport, badge), "bottom-right");
+  // A selection spanning both corners leaves it where it is.
+  assert.equal(
+    badgeCorner("top-left", [{ x: 20, y: 20 }, { x: 1420, y: 880 }], viewport, badge),
+    "top-left",
+  );
+  assert.equal(badgeCorner("bottom-right", [{ x: 1400, y: 860 }], viewport, badge), "top-left");
+});
+
+// ---- Packaged-build boundary ---------------------------------------------------------------
+
+test("the hold proof and its helper override are ignored by a packaged KE Pen", () => {
+  const main = readFileSync(new URL("../desktop/main.ts", import.meta.url), "utf8");
+  assert.match(main, /const HOLD_PROOF = app\.isPackaged\s*\?\s*undefined/);
+  assert.match(main, /const override = IS_HOLD_PROOF \? process\.env\.KE_PEN_HOLD_HELPER_OVERRIDE : undefined;/);
+  // KE Pen itself never asks macOS for Accessibility; the helper does.
+  assert.doesNotMatch(main, /isTrustedAccessibilityClient/);
+});
+
+test("electron-builder turns off the Node.js entry points the MCP bridge does not need", () => {
+  const config = readFileSync(new URL("../electron-builder.yml", import.meta.url), "utf8");
+  assert.match(config, /electronFuses:/);
+  assert.match(config, /enableNodeOptionsEnvironmentVariable: false/);
+  assert.match(config, /enableNodeCliInspectArguments: false/);
+  assert.match(config, /onlyLoadAppFromAsar: true/);
+  // The embedded MCP server is started as KE Pen's executable in Node mode.
+  assert.match(config, /runAsNode: true/);
+});
+
 // ---- Supervisor against a fake helper process ----------------------------------------------
 
 interface Scheduled {
@@ -647,6 +801,27 @@ test("needs-permission is reported and holds are only forwarded from an active h
     await active.waitFor((status) => status.state === "active", "active");
     await eventually(async () => active.holds.length === 1, "a hold");
     assert.deepEqual(active.holds, [1]);
+  } finally {
+    await active.dispose();
+  }
+});
+
+test("the permission prompt is only sent to a helper that is waiting for it", async () => {
+  const waiting = await harness("needs-permission");
+  try {
+    assert.equal(waiting.supervisor.requestPermissionPrompt(), false, "not before the helper is ready");
+    waiting.supervisor.start();
+    await waiting.waitFor((status) => status.state === "needs-permission", "needs-permission");
+    assert.equal(waiting.supervisor.requestPermissionPrompt(), true);
+    await eventually(async () => (await waiting.commands()).includes('{"cmd":"prompt"}'), "the prompt");
+  } finally {
+    await waiting.dispose();
+  }
+  const active = await harness("normal");
+  try {
+    active.supervisor.start();
+    await active.waitFor((status) => status.state === "active", "active");
+    assert.equal(active.supervisor.requestPermissionPrompt(), false, "an active helper needs no prompt");
   } finally {
     await active.dispose();
   }

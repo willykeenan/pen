@@ -64,7 +64,15 @@ uint32_t hold_set_threshold(hold_machine_t *machine, long milliseconds);
 uint32_t hold_set_armed(hold_machine_t *machine, int armed);
 uint32_t hold_on_input(hold_machine_t *machine, hold_input_t input, double x, double y);
 uint32_t hold_on_timer(hold_machine_t *machine, uint32_t token);
-uint32_t hold_on_tap_reset(hold_machine_t *machine);
+/*
+ * The platform stopped seeing input for a while: macOS disabled the event tap
+ * (a callback timed out, or user input disabled it), or Windows may have
+ * dropped the low-level hook. `button_down` is the middle button's physical
+ * state now; `new_press` says a different press started while nothing was
+ * watched. A press that is still the same one keeps its state, so a hold
+ * stays a hold and its up is still swallowed; anything else is given back.
+ */
+uint32_t hold_on_tap_reset(hold_machine_t *machine, int button_down, int new_press);
 uint32_t hold_on_shutdown(hold_machine_t *machine);
 const char *hold_state_name(hold_state_t state);
 

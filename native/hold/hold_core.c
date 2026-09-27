@@ -130,19 +130,39 @@ uint32_t hold_on_timer(hold_machine_t *machine, uint32_t token) {
   return HOLD_ACT_EMIT_HOLD;
 }
 
-uint32_t hold_on_tap_reset(hold_machine_t *machine) {
-  hold_state_t previous = machine->state;
-  machine->state = HOLD_IDLE;
-  if (previous == HOLD_PENDING) {
-    /* The system may have let the up through while the tap was off. A full
-     * click is the only replay that cannot leave the button stuck down. */
-    return HOLD_ACT_CANCEL_TIMER | HOLD_ACT_REPLAY_DOWN | HOLD_ACT_REPLAY_UP;
+uint32_t hold_on_tap_reset(hold_machine_t *machine, int button_down, int new_press) {
+  const int same_press_held = button_down && !new_press;
+  switch (machine->state) {
+    case HOLD_PENDING:
+      /* Still the same press, still held: nothing was missed, so the timer
+       * that is already running decides between a click and a hold. */
+      if (same_press_held) return HOLD_ACT_NONE;
+      /* Otherwise its up went by, or a new press replaced it, while nothing
+       * was watching. A full click is the only replay that cannot leave the
+       * button stuck down in the app. */
+      machine->state = button_down ? HOLD_PASSTHROUGH : HOLD_IDLE;
+      return HOLD_ACT_CANCEL_TIMER | HOLD_ACT_REPLAY_DOWN | HOLD_ACT_REPLAY_UP;
+    case HOLD_FIRED:
+      /* The capture is under way; its matching up must still be swallowed. */
+      if (same_press_held) return HOLD_ACT_NONE;
+      machine->state = button_down ? HOLD_PASSTHROUGH : HOLD_IDLE;
+      return HOLD_ACT_NONE;
+    case HOLD_PASSTHROUGH:
+      if (!button_down) machine->state = HOLD_IDLE;
+      return HOLD_ACT_NONE;
+    case HOLD_IDLE:
+    default:
+      /* A press that began unwatched reached the app; its up belongs there. */
+      if (button_down && new_press) machine->state = HOLD_PASSTHROUGH;
+      return HOLD_ACT_NONE;
   }
-  return HOLD_ACT_NONE;
 }
 
 uint32_t hold_on_shutdown(hold_machine_t *machine) {
-  uint32_t actions = hold_on_tap_reset(machine);
+  /* Stopping for good: a click still held back is always given back, and a
+   * fired press has nobody left to swallow its up. */
+  uint32_t actions = hold_on_tap_reset(machine, 0, 0);
+  machine->state = HOLD_IDLE;
   machine->armed = 0;
   return actions;
 }

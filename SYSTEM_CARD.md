@@ -52,7 +52,8 @@ send, deploy, purchase, or take another consequential action.
   copies, and a bounded 25-entry link history.
 - `ke-pen-hold-helper` (macOS and Windows): a supervised native process that
   holds back only the middle mouse button for hold-to-capture, speaks a
-  four-command stdio protocol, and starts disarmed.
+  five-command stdio protocol, starts disarmed, and holds its own macOS
+  Accessibility approval.
 - No cloud backend, account, telemetry, ads, remote code, or TCP/network listener.
 - A same-user local IPC broker for Agent Displays; it opens no TCP/network port.
 
@@ -84,9 +85,12 @@ protocol whitelist, supervisor restart/back-off/version checks against a fake
 helper, multi-display capture matching and crop mapping, a real Electron
 runtime proof that every display is frozen before any selector window is
 created, painted, shown, or focused and that the crop reaches the clipboard at
-the exact size, and a synthetic macOS integration test through the real helper
-(click replay after release, hold at threshold with nothing leaking, drag
-pass-through, disarm replay, an open menu surviving a hold, crash recovery).
+the exact size (and that each frame is its display's native size, and Escape
+and a right click copy nothing), and synthetic integration tests through the
+real helper on macOS and Windows (click replay after release, hold at threshold
+with nothing leaking, drag pass-through, disarm replay, an open menu surviving
+a hold, recovery after the OS stalls or drops the tap or hook, the helper being
+its own responsible process on macOS, crash recovery).
 
 Agent-reference checks add exact sender/recipient isolation, capability denial,
 owner-only file modes, checksum and PNG bounds, source-annotation lifecycle
@@ -124,8 +128,9 @@ app or CDN already fetched.
 Hold to capture is bounded to the middle mouse button. Its helper is armed only
 by KE Pen while KE Pen is idle, cannot be told to post arbitrary input (its only
 posts are the person's own held-back click), makes no network request, never
-records positions, and stops with KE Pen. On macOS it needs Accessibility for
-KE Pen; Windows needs no permission; Linux is unsupported.
+records positions, and stops with KE Pen. On macOS the helper holds its own
+Accessibility approval (KE Pen never asks for it), so code run as KE Pen cannot
+borrow it; Windows needs no permission; Linux is unsupported.
 
 Agent Displays are separately bounded to packaged fixtures and loopback. Each
 renderer has a memory-only partition; public/cross-origin requests, permissions,
@@ -162,10 +167,12 @@ touch human UI, capture a desktop, use the clipboard, or upload.
   paste an endpoint and token into a local settings file; changing the KE Shot
   hotkey requires restarting the app. Deleting a shot depends on the user's own
   endpoint implementing `DELETE /<id>`.
-- Hold to capture is macOS and Windows only. Unsigned public macOS builds lose
-  the Accessibility approval when the app changes; a quick middle click over an
-  elevated Windows window cannot be given back.
-- Public builds are unsigned and not Apple-notarized or Windows-signed.
+- Hold to capture is macOS and Windows only. Ad hoc signed macOS builds (your
+  own, or CI's) lose the helper's approval when the app changes; a quick middle
+  click over an elevated Windows window cannot be given back.
+- The published macOS download is signed with K&E Studios' self-signed
+  certificate, not an Apple Developer ID, and is not notarized; Windows and
+  Linux builds are unsigned.
 - No claim of model training, autonomous authority, broad adoption, or
   universal host compatibility is made.
 

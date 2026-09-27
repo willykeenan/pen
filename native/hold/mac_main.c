@@ -11,13 +11,22 @@
  * The helper talks to KE Pen over stdio (see protocol.h). It starts disarmed,
  * exits when stdin closes or its parent exits, and gives back any click it is
  * still holding when it stops. It never logs or reports a position.
+ *
+ * The Accessibility approval an active tap needs belongs to this helper, not
+ * to KE Pen: at start the helper re-executes itself with macOS's "disclaim
+ * responsibility" spawn attribute, so macOS checks and lists the helper's own
+ * code. KE Pen (an Electron app) never asks for Accessibility, and nothing
+ * that can run code as KE Pen can borrow an approval it does not have.
  */
 #include <ApplicationServices/ApplicationServices.h>
 #include <dispatch/dispatch.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <mach-o/dyld.h>
 #include <signal.h>
+#include <spawn.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -41,14 +50,36 @@
 #define MIDDLE_BUTTON 2
 #define SLOP_POINTS 6.0
 #define PERMISSION_POLL_SECONDS 2.0
+/* How often a running tap is checked: macOS disables a tap whose callback was
+ * too slow but only says so with the next event, which by then has gone
+ * straight to the app. The check re-enables it within a second instead. */
+#define WATCHDOG_SECONDS 1.0
+/* Every third watchdog tick also re-checks the Accessibility approval. */
+#define TRUST_CHECK_EVERY_TICKS 3
 #define DISTANT_FUTURE_SECONDS 1.0e10
+/* Set on the re-executed helper so it does not disclaim twice. */
+#define DISCLAIMED_ENV "KE_PEN_HOLD_DISCLAIMED"
+/* Test-only: keep the caller's responsibility (and so its Accessibility
+ * approval). Setting it gains nothing: the helper then runs with exactly the
+ * approval whoever started it already has. */
+#define INHERIT_ENV "KE_PEN_HOLD_INHERIT_RESPONSIBILITY"
+
+extern char **environ;
+/* libSystem, macOS 10.14+. Declared here because the SDK keeps it private. */
+extern int responsibility_spawnattrs_setdisclaim(posix_spawnattr_t *attrs, int disclaim)
+    __attribute__((weak_import));
 
 static hold_machine_t g_machine;
 static CFMachPortRef g_tap = NULL;
 static CFRunLoopSourceRef g_tap_source = NULL;
 static CFRunLoopTimerRef g_hold_timer = NULL;
 static CFRunLoopTimerRef g_permission_timer = NULL;
+static CFRunLoopTimerRef g_watchdog_timer = NULL;
+static unsigned g_watchdog_ticks = 0;
 static CGEventRef g_saved_down = NULL;
+/* Other-mouse downs the HID system had counted when the pending press began,
+ * so a tap reset can tell the same press from a new one. */
+static uint32_t g_down_count_at_press = 0;
 static CGEventSourceRef g_replay_source = NULL;
 static uint32_t g_timer_token = 0;
 static uint32_t g_hold_sequence = 0;
@@ -59,6 +90,7 @@ static dispatch_source_t g_parent_source = NULL;
 static dispatch_source_t g_signal_sources[3];
 
 static void shutdown_and_exit(int status);
+static void wait_for_permission(void);
 
 /* Output is non-blocking: a stalled reader must never stall the run loop the
  * tap callback depends on, so a line that does not fit is dropped. */
@@ -90,6 +122,8 @@ static void post_copy(CGEventTapProxy proxy, CGEventRef source, CGEventType type
   if (copy == NULL) return;
   CGEventSetType(copy, type);
   if (g_replay_source != NULL) CGEventSetSource(copy, g_replay_source);
+  /* An up built from the stored down must not carry the down's pressure. */
+  if (type == kCGEventOtherMouseUp) CGEventSetDoubleValueField(copy, kCGMouseEventPressure, 0.0);
   now = current_timestamp();
   if (now != 0) CGEventSetTimestamp(copy, now);
   if (proxy != NULL) {
@@ -130,6 +164,8 @@ static void perform(uint32_t actions, CGEventTapProxy proxy, CGEventRef current)
   if ((actions & HOLD_ACT_STORE_ORIGIN) && current != NULL) {
     if (g_saved_down != NULL) CFRelease(g_saved_down);
     g_saved_down = CGEventCreateCopy(current);
+    g_down_count_at_press =
+        CGEventSourceCounterForEventType(kCGEventSourceStateHIDSystemState, kCGEventOtherMouseDown);
   }
   if (actions & HOLD_ACT_START_TIMER) start_hold_timer();
   if (actions & HOLD_ACT_EMIT_HOLD) {
@@ -137,6 +173,51 @@ static void perform(uint32_t actions, CGEventTapProxy proxy, CGEventRef current)
     g_hold_sequence += 1;
     emit(line, hold_format_hold(line, sizeof(line), g_hold_sequence));
   }
+}
+
+static void remove_tap(void);
+
+/* Middle-button state as the HID system saw it, before any session tap, for
+ * deciding what a tap reset means. The helper's own replays are posted at the
+ * session level and never show up here. */
+static void middle_button_now(int *button_down, int *new_press) {
+  uint32_t downs =
+      CGEventSourceCounterForEventType(kCGEventSourceStateHIDSystemState, kCGEventOtherMouseDown);
+  *button_down = CGEventSourceButtonState(kCGEventSourceStateHIDSystemState, kCGMouseButtonCenter);
+  *new_press = downs != g_down_count_at_press;
+}
+
+/* The approval was withdrawn while the tap was running: stop holding anything
+ * back, say so, and wait for it to come back. */
+static void deactivate_for_permission(void) {
+  cancel_hold_timer();
+  remove_tap();
+  if (g_watchdog_timer != NULL) {
+    CFRunLoopTimerInvalidate(g_watchdog_timer);
+    CFRelease(g_watchdog_timer);
+    g_watchdog_timer = NULL;
+  }
+  perform(hold_on_tap_reset(&g_machine, 0, 0), NULL, NULL);
+  wait_for_permission();
+}
+
+/* Re-enables a tap macOS has disabled and settles whatever press was in
+ * flight: one that is still held keeps its meaning, anything the tap missed
+ * is given back as a click. Returns 1 when the tap had been disabled. */
+static int recover_disabled_tap(const char *reason) {
+  char line[96];
+  int button_down = 0;
+  int new_press = 0;
+  if (g_tap == NULL || CGEventTapIsEnabled(g_tap)) return 0;
+  if (!AXIsProcessTrusted()) {
+    deactivate_for_permission();
+    return 1;
+  }
+  CGEventTapEnable(g_tap, true);
+  middle_button_now(&button_down, &new_press);
+  perform(hold_on_tap_reset(&g_machine, button_down, new_press), NULL, NULL);
+  emit(line, hold_format_tap_restored(line, sizeof(line), reason));
+  return 1;
 }
 
 static CGEventRef tap_callback(CGEventTapProxy proxy, CGEventType type, CGEventRef event,
@@ -147,13 +228,9 @@ static CGEventRef tap_callback(CGEventTapProxy proxy, CGEventType type, CGEventR
   (void)context;
 
   if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput) {
-    char line[96];
-    if (g_tap != NULL) CGEventTapEnable(g_tap, true);
-    /* Whatever happened while the tap was off, a held click comes back. */
-    perform(hold_on_tap_reset(&g_machine), NULL, NULL);
-    emit(line, hold_format_tap_restored(line, sizeof(line),
-                                        type == kCGEventTapDisabledByTimeout ? "timeout"
-                                                                             : "user-input"));
+    /* A tap the watchdog already re-enabled has nothing left to recover:
+     * this notice only arrives with the next event, after the fact. */
+    recover_disabled_tap(type == kCGEventTapDisabledByTimeout ? "timeout" : "user-input");
     return event;
   }
   /* Every button other than the middle one leaves untouched, first thing. */
@@ -173,8 +250,21 @@ static CGEventRef tap_callback(CGEventTapProxy proxy, CGEventType type, CGEventR
 }
 
 static void hold_timer_fired(CFRunLoopTimerRef timer, void *context) {
+  int button_down = 0;
+  int new_press = 0;
   (void)timer;
   (void)context;
+  /* The release (or a new press) can have gone by unseen while this process
+   * was not scheduled, and macOS may have disabled the tap meanwhile. Settle
+   * that first; a hold is only reported for the press that is still held. */
+  recover_disabled_tap("watchdog");
+  if (g_machine.state == HOLD_PENDING && g_timer_token == g_machine.token) {
+    middle_button_now(&button_down, &new_press);
+    if (!button_down || new_press) {
+      perform(hold_on_tap_reset(&g_machine, button_down, new_press), NULL, NULL);
+      return;
+    }
+  }
   perform(hold_on_timer(&g_machine, g_timer_token), NULL, NULL);
 }
 
@@ -213,25 +303,57 @@ static void remove_tap(void) {
   }
 }
 
-/* KE Pen's Accessibility approval is what allows an active tap. macOS applies
- * it to this helper because KE Pen is its responsible process. */
+/* While the tap is up: re-enable it if macOS disabled it, and notice a
+ * withdrawn approval, which does not always tell a running tap. */
+static void watchdog_fired(CFRunLoopTimerRef timer, void *context) {
+  (void)timer;
+  (void)context;
+  if (g_tap == NULL) return;
+  if (recover_disabled_tap("watchdog")) return;
+  g_watchdog_ticks += 1;
+  if (g_watchdog_ticks % TRUST_CHECK_EVERY_TICKS == 0 && !AXIsProcessTrusted()) {
+    deactivate_for_permission();
+  }
+}
+
+static void start_watchdog(void) {
+  CFRunLoopTimerContext timer_context = {0, NULL, NULL, NULL, NULL};
+  if (g_watchdog_timer != NULL) return;
+  g_watchdog_timer = CFRunLoopTimerCreate(kCFAllocatorDefault,
+                                          CFAbsoluteTimeGetCurrent() + WATCHDOG_SECONDS,
+                                          WATCHDOG_SECONDS, 0, 0, watchdog_fired, &timer_context);
+  CFRunLoopAddTimer(CFRunLoopGetMain(), g_watchdog_timer, kCFRunLoopCommonModes);
+}
+
+/* The helper's own Accessibility approval is what allows an active tap. With
+ * the approval granted, a tap that still cannot be created is a real failure:
+ * the helper exits so KE Pen's supervisor backs off and, after repeated
+ * failures, offers a restart instead of asking for a permission that is
+ * already there. */
 static int try_activate(void) {
   char line[128];
   if (!AXIsProcessTrusted()) return 0;
   if (!install_tap()) {
     emit_error("tap-create-failed");
+    shutdown_and_exit(1);
     return 0;
   }
+  start_watchdog();
   emit(line, hold_format_active(line, sizeof(line)));
   return 1;
 }
 
+static void stop_permission_timer(void) {
+  if (g_permission_timer == NULL) return;
+  CFRunLoopTimerInvalidate(g_permission_timer);
+  CFRelease(g_permission_timer);
+  g_permission_timer = NULL;
+}
+
 static void permission_timer_fired(CFRunLoopTimerRef timer, void *context) {
+  (void)timer;
   (void)context;
-  if (try_activate()) {
-    CFRunLoopTimerInvalidate(timer);
-    g_permission_timer = NULL;
-  }
+  if (try_activate()) stop_permission_timer();
 }
 
 static void wait_for_permission(void) {
@@ -243,6 +365,21 @@ static void wait_for_permission(void) {
       kCFAllocatorDefault, CFAbsoluteTimeGetCurrent() + PERMISSION_POLL_SECONDS,
       PERMISSION_POLL_SECONDS, 0, 0, permission_timer_fired, &timer_context);
   CFRunLoopAddTimer(CFRunLoopGetMain(), g_permission_timer, kCFRunLoopCommonModes);
+}
+
+/* Shows macOS's own Accessibility alert for this helper, which also adds it
+ * to System Settings › Privacy & Security › Accessibility. KE Pen sends this
+ * only after the person chose to set hold to capture up. */
+static void request_permission_prompt(void) {
+  const void *keys[] = {kAXTrustedCheckOptionPrompt};
+  const void *values[] = {kCFBooleanTrue};
+  CFDictionaryRef options;
+  if (g_tap != NULL) return;
+  options = CFDictionaryCreate(kCFAllocatorDefault, keys, values, 1, &kCFTypeDictionaryKeyCallBacks,
+                               &kCFTypeDictionaryValueCallBacks);
+  if (options == NULL) return;
+  if (AXIsProcessTrustedWithOptions(options) && try_activate()) stop_permission_timer();
+  CFRelease(options);
 }
 
 static void handle_line(const char *line, size_t length, int too_long, void *context) {
@@ -268,6 +405,9 @@ static void handle_line(const char *line, size_t length, int too_long, void *con
       break;
     case HOLD_CMD_DISARM:
       perform(hold_set_armed(&g_machine, 0), NULL, NULL);
+      break;
+    case HOLD_CMD_PROMPT:
+      request_permission_prompt();
       break;
     case HOLD_CMD_QUIT:
       shutdown_and_exit(0);
@@ -317,6 +457,36 @@ static void watch_signal(int index, int signal_number) {
   g_signal_sources[index] = source;
 }
 
+/*
+ * Makes this helper its own "responsible process" for macOS privacy checks by
+ * re-executing itself in place (same pid, same pipes) with the disclaim
+ * attribute. Fails closed: a helper that cannot disclaim never runs under
+ * KE Pen's identity.
+ */
+static void disclaim_responsibility(char **argv) {
+  char path[4096];
+  uint32_t size = sizeof(path);
+  posix_spawnattr_t attributes;
+  int result;
+  if (getenv(INHERIT_ENV) != NULL || getenv(DISCLAIMED_ENV) != NULL) return;
+  if (responsibility_spawnattrs_setdisclaim == NULL || _NSGetExecutablePath(path, &size) != 0) {
+    emit_error("disclaim-unavailable");
+    exit(1);
+  }
+  if (setenv(DISCLAIMED_ENV, "1", 1) != 0 || posix_spawnattr_init(&attributes) != 0) exit(1);
+  posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETEXEC);
+  if (responsibility_spawnattrs_setdisclaim(&attributes, 1) != 0) {
+    emit_error("disclaim-failed");
+    exit(1);
+  }
+  /* Only returns when the exec failed. */
+  result = posix_spawn(NULL, path, NULL, &attributes, argv, environ);
+  (void)result;
+  posix_spawnattr_destroy(&attributes);
+  emit_error("disclaim-failed");
+  exit(1);
+}
+
 static void set_nonblocking(int descriptor) {
   int flags;
   if (isatty(descriptor)) return;
@@ -327,6 +497,7 @@ static void set_nonblocking(int descriptor) {
 int main(int argc, char **argv) {
   char line[256];
   pid_t parent;
+  (void)environ;
   CFRunLoopTimerContext timer_context = {0, NULL, NULL, NULL, NULL};
 
   if (argc == 2 && strcmp(argv[1], "--version") == 0) {
@@ -342,6 +513,7 @@ int main(int argc, char **argv) {
   parent = getppid();
   if (parent <= 1) return 0; /* already orphaned: never swallow for nobody */
 
+  disclaim_responsibility(argv);
   signal(SIGPIPE, SIG_IGN);
   set_nonblocking(STDOUT_FILENO);
   set_nonblocking(STDIN_FILENO);

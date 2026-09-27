@@ -13,8 +13,12 @@
  *
  * The hook procedure stays O(1). Re-sending input and writing to stdout happen
  * on the message loop and a writer thread, never inside the hook, because
- * Windows silently removes hooks that exceed LowLevelHooksTimeout. The hook is
- * re-installed every ten minutes while idle for the same reason.
+ * Windows silently removes hooks that exceed LowLevelHooksTimeout. A hook can
+ * only be removed that way while this thread is not answering, so a heartbeat
+ * timer watches for such stalls: after one, the hook is re-installed and a
+ * press the helper may have lost track of is given back. The hook is also
+ * re-installed every 30 seconds whatever the state, and a press that has seen
+ * no input for far longer than the hold threshold is reset.
  *
  * Input sent into a window running elevated is blocked by UIPI, so a quick
  * middle click over an administrator window cannot be given back.
@@ -45,7 +49,14 @@
 #define SLOP_PIXELS 8.0
 #define HOLD_TIMER_ID 1
 #define REHOOK_TIMER_ID 2
-#define REHOOK_INTERVAL_MS (10u * 60u * 1000u)
+#define HEARTBEAT_TIMER_ID 3
+#define REHOOK_INTERVAL_MS (30u * 1000u)
+#define HEARTBEAT_INTERVAL_MS 200u
+/* A gap this long between heartbeats means this thread stopped answering for
+ * long enough that Windows may have dropped the hook. */
+#define STALL_GAP_MS 500u
+/* A non-idle press with no hook call for this long past its threshold is stale. */
+#define STALE_PRESS_SLACK_MS 2000u
 #define WM_KEPEN_WORK (WM_APP + 1)
 #define WM_KEPEN_COMMAND (WM_APP + 2)
 #define WM_KEPEN_SHUTDOWN (WM_APP + 3)
@@ -65,6 +76,8 @@ static HHOOK g_hook = NULL;
 static HWND g_window = NULL;
 static POINT g_origin;
 static uint32_t g_timer_token = 0;
+static ULONGLONG g_last_beat = 0;
+static ULONGLONG g_last_hook_call = 0;
 static uint32_t g_hold_sequence = 0;
 static int g_shutting_down = 0;
 
@@ -129,33 +142,80 @@ static DWORD WINAPI writer_thread(LPVOID unused) {
   }
 }
 
-static void send_middle(DWORD flag) {
-  INPUT input;
-  memset(&input, 0, sizeof(input));
-  input.type = INPUT_MOUSE;
-  input.mi.dwFlags = flag;
-  input.mi.dwExtraInfo = KE_PEN_REPLAY_TAG;
-  SendInput(1, &input, sizeof(INPUT));
+/* All replays for one action set go out as a single SendInput batch, which
+ * Windows inserts into the input stream without anything interleaved. The
+ * pointer is only moved when it is farther than the drag slop from where a
+ * replayed event belongs, and is always put back where it is now. */
+typedef struct {
+  INPUT items[8];
+  UINT count;
+} batch_t;
+
+static void add_button(batch_t *batch, DWORD flag) {
+  INPUT *input;
+  if (batch->count >= 8) return;
+  input = &batch->items[batch->count++];
+  memset(input, 0, sizeof(*input));
+  input->type = INPUT_MOUSE;
+  input->mi.dwFlags = flag;
+  input->mi.dwExtraInfo = KE_PEN_REPLAY_TAG;
+}
+
+static void add_move(batch_t *batch, POINT at) {
+  INPUT *input;
+  int left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+  int top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+  int width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+  int height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+  if (batch->count >= 8 || width < 2 || height < 2) return;
+  input = &batch->items[batch->count++];
+  memset(input, 0, sizeof(*input));
+  input->type = INPUT_MOUSE;
+  input->mi.dx = (LONG)(((double)(at.x - left) * 65535.0) / (double)(width - 1) + 0.5);
+  input->mi.dy = (LONG)(((double)(at.y - top) * 65535.0) / (double)(height - 1) + 0.5);
+  input->mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+  input->mi.dwExtraInfo = KE_PEN_REPLAY_TAG;
+}
+
+static int farther_than_slop(POINT a, POINT b) {
+  double dx = (double)(a.x - b.x);
+  double dy = (double)(a.y - b.y);
+  return dx * dx + dy * dy > SLOP_PIXELS * SLOP_PIXELS;
 }
 
 static void perform_replays(const work_t *work) {
-  if (work->actions & HOLD_ACT_REPLAY_DOWN) {
-    SetCursorPos(work->replay_at.x, work->replay_at.y);
-    send_middle(MOUSEEVENTF_MIDDLEDOWN);
+  batch_t batch;
+  POINT cursor;
+  int have_cursor = GetCursorPos(&cursor) ? 1 : 0;
+  int away = 0; /* the pointer was moved off where it is now */
+  batch.count = 0;
+  if (work->actions & (HOLD_ACT_REPLAY_DOWN | HOLD_ACT_REPLAY_UP)) {
+    if (have_cursor && farther_than_slop(cursor, work->replay_at)) {
+      add_move(&batch, work->replay_at);
+      away = 1;
+    }
+    if (work->actions & HOLD_ACT_REPLAY_DOWN) add_button(&batch, MOUSEEVENTF_MIDDLEDOWN);
+    if (work->actions & HOLD_ACT_REPLAY_UP) add_button(&batch, MOUSEEVENTF_MIDDLEUP);
   }
-  if (work->actions & HOLD_ACT_REPLAY_UP) send_middle(MOUSEEVENTF_MIDDLEUP);
   if (work->actions & HOLD_ACT_REPLAY_CURRENT) {
     if (work->current == HOLD_INPUT_DOWN) {
-      SetCursorPos(work->current_at.x, work->current_at.y);
-      send_middle(MOUSEEVENTF_MIDDLEDOWN);
+      if (away || (have_cursor && farther_than_slop(cursor, work->current_at))) {
+        add_move(&batch, work->current_at);
+        away = have_cursor && farther_than_slop(cursor, work->current_at);
+      }
+      add_button(&batch, MOUSEEVENTF_MIDDLEDOWN);
     } else if (work->current == HOLD_INPUT_UP) {
-      send_middle(MOUSEEVENTF_MIDDLEUP);
+      if (away) {
+        add_move(&batch, cursor);
+        away = 0;
+      }
+      add_button(&batch, MOUSEEVENTF_MIDDLEUP);
     }
   }
-  if (work->current == HOLD_INPUT_DRAG && (work->actions & HOLD_ACT_REPLAY_DOWN)) {
-    /* The drag starts where the press did, then carries on from here. */
-    SetCursorPos(work->current_at.x, work->current_at.y);
-  }
+  /* A drag handed back starts where the press did and continues from the
+   * pointer's position at replay time, never from a stale one. */
+  if (away && have_cursor) add_move(&batch, cursor);
+  if (batch.count > 0) SendInput(batch.count, batch.items, sizeof(INPUT));
 }
 
 static void queue_work(uint32_t actions, POINT replay_at, POINT current_at, hold_input_t current) {
@@ -184,6 +244,7 @@ static LRESULT CALLBACK mouse_hook(int code, WPARAM message, LPARAM lparam) {
   uint32_t actions;
   POINT replay_at;
   if (code != HC_ACTION) return CallNextHookEx(NULL, code, message, lparam);
+  g_last_hook_call = GetTickCount64();
   /* Only the middle button, and moves while a middle press is pending. */
   if (message != WM_MBUTTONDOWN && message != WM_MBUTTONUP && message != WM_MOUSEMOVE) {
     return CallNextHookEx(NULL, code, message, lparam);
@@ -241,6 +302,26 @@ static int install_hook(void) {
   return 1;
 }
 
+/* The hook may have been dropped, and with it any input since: re-install it
+ * and give back whatever press the machine was still tracking. */
+static void recover_after_hook_loss(const char *reason) {
+  char line[96];
+  if (!install_hook()) emit_error("hook-reinstall-failed");
+  if (g_machine.state != HOLD_IDLE) perform_outside_hook(hold_on_tap_reset(&g_machine, 0, 0));
+  emit(line, hold_format_tap_restored(line, sizeof(line), reason));
+}
+
+/* Returns 1 when this thread stopped answering for long enough that Windows
+ * may have removed the hook, after recovering from it. */
+static int check_for_stall(const char *reason) {
+  ULONGLONG now = GetTickCount64();
+  ULONGLONG gap = now - g_last_beat;
+  g_last_beat = now;
+  if (gap <= HEARTBEAT_INTERVAL_MS + STALL_GAP_MS) return 0;
+  recover_after_hook_loss(reason);
+  return 1;
+}
+
 static void shutdown_and_exit(int status) {
   uint32_t actions;
   if (g_shutting_down) return;
@@ -263,9 +344,17 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
     case WM_TIMER:
       if (wparam == HOLD_TIMER_ID) {
         KillTimer(window, HOLD_TIMER_ID);
-        perform_outside_hook(hold_on_timer(&g_machine, g_timer_token));
+        /* A stall since the last heartbeat may have cost the hook, and with
+         * it the release: recover instead of reporting a hold nobody made. */
+        if (!check_for_stall("stall")) perform_outside_hook(hold_on_timer(&g_machine, g_timer_token));
+      } else if (wparam == HEARTBEAT_TIMER_ID) {
+        check_for_stall("stall");
       } else if (wparam == REHOOK_TIMER_ID) {
-        if (g_machine.state == HOLD_IDLE && !install_hook()) emit_error("hook-reinstall-failed");
+        ULONGLONG quiet = GetTickCount64() - g_last_hook_call;
+        if (!install_hook()) emit_error("hook-reinstall-failed");
+        if (g_machine.state != HOLD_IDLE && quiet > g_machine.threshold_ms + STALE_PRESS_SLACK_MS) {
+          recover_after_hook_loss("stale");
+        }
       }
       return 0;
     case WM_KEPEN_WORK:
@@ -281,6 +370,9 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
           break;
         case HOLD_CMD_DISARM:
           perform_outside_hook(hold_set_armed(&g_machine, 0));
+          break;
+        case HOLD_CMD_PROMPT:
+          /* Windows asks for no permission; nothing to show. */
           break;
         case HOLD_CMD_QUIT:
           shutdown_and_exit(0);
@@ -412,7 +504,10 @@ int main(int argc, char **argv) {
     return 1;
   }
   emit(line, hold_format_active(line, sizeof(line)));
+  g_last_beat = GetTickCount64();
+  g_last_hook_call = g_last_beat;
   SetTimer(g_window, REHOOK_TIMER_ID, REHOOK_INTERVAL_MS, NULL);
+  SetTimer(g_window, HEARTBEAT_TIMER_ID, HEARTBEAT_INTERVAL_MS, NULL);
 
   thread = CreateThread(NULL, 0, stdin_thread, NULL, 0, NULL);
   if (thread == NULL) shutdown_and_exit(1);

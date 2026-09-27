@@ -54,6 +54,10 @@ jobs:
         if: runner.os == 'macOS'
         run: npm run verify:hold:mac
 
+      - name: Synthetic Windows hold integration (real helper, SendInput)
+        if: runner.os == 'Windows'
+        run: npm run verify:hold:win
+
       - name: Verify exact MCP discovery surface
         run: npm run verify:bundle
 
@@ -87,6 +91,10 @@ jobs:
             script: package:linux
             verify: linux
     runs-on: ${{ matrix.os }}
+    env:
+      # macOS builds are signed ad hoc by scripts/sign-mac.cjs, which needs no
+      # secrets; electron-builder skips all signing on pull requests otherwise.
+      CSC_FOR_PULL_REQUEST: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

@@ -22,7 +22,8 @@ get a shareable link too. See [KE Shot](#ke-shot) below.
 KE Pen 0.6.0 adds **hold to capture**: hold the middle mouse button for half a
 second and KE Pen freezes the screen—open menus included—then opens the KE Shot
 selector over the frozen image. Menus that close the moment you reach for a
-shortcut can finally be captured. A quick middle click still works as usual.
+shortcut can finally be captured. A quick middle click still works; it lands
+when you let go.
 See [Hold the middle button](#hold-the-middle-button).
 
 KE Pen 0.5.1 makes the successful macOS link confirmation a KE Pen-owned,
@@ -112,10 +113,13 @@ With either field empty it copies, saves locally, and stops there.
 Hold the middle mouse button still for half a second. At that instant KE Pen
 captures every display—before it shows a window, moves focus, or activates
 itself—so the menu, tooltip, or hover state you were looking at is still in the
-picture. The selector then opens over that frozen image (its badge reads
-**FROZEN**). Drag a region and the crop goes through the normal KE Shot flow:
-clipboard immediately, local copy, optional upload. **Esc** cancels.
+picture. The selector then opens over that frozen image: it appears exactly as
+the screen was, the dim fades in, and a thin red border marks it as a picture.
+Drag a region and the crop goes through the normal KE Shot flow: clipboard
+immediately, local copy, optional upload.
 
+- **Cancel** with **Esc**, a click without dragging, or a right or middle
+  click. A frozen selector left alone for a minute closes by itself.
 - **Quick clicks still work.** A middle press is held back until you release;
   released before the delay, the same click is given back at the same spot, so
   opening links in new tabs, closing tabs, and pasting keep working. The click
@@ -126,24 +130,41 @@ clipboard immediately, local copy, optional upload. **Esc** cancels.
   does become a capture; raise the delay or switch the feature off if that gets
   in your way.
 - **Settings.** Tray › **Hold middle button to capture** turns it on or off (on
-  by default on macOS and Windows); **Hold delay** picks 200 ms to 1.5 s
-  (500 ms by default).
-- **Permission.** On macOS, holding the button back from the app under the
-  pointer needs **Accessibility** for KE Pen. KE Pen explains this once and
-  opens the exact System Settings pane; it notices the approval without a
-  restart. If KE Pen already shows as allowed but hold-to-capture still asks,
-  that switch belongs to an older build—turn it off and back on. Windows needs
-  no permission. Linux is not supported: Wayland forbids global interception
-  and X11 already uses the middle click for paste.
-- **Scope.** A small helper process, `ke-pen-hold-helper`, watches only the
-  middle button—never the keyboard or other buttons—and never stores or logs
+  by default on macOS and Windows); **How long to hold** picks 0.2 s to 1.5 s
+  (0.5 s by default; 0.2 s may turn slow ordinary clicks into captures).
+- **Permission (macOS).** Catching the middle button before other apps see it
+  needs **Accessibility**, and on macOS that approval belongs to the small
+  helper, not to KE Pen: System Settings lists it as **ke-pen-hold-helper**.
+  Nothing pops up the moment KE Pen starts. Once you have been idle for a few
+  seconds, KE Pen explains the approval once; **Continue** shows macOS's own
+  Accessibility prompt for the helper, and you switch it on in System Settings
+  › Privacy & Security › Accessibility. KE Pen notices within two seconds, with
+  no restart, and says **Hold to capture is ready**. The tray item
+  **Hold to capture: allow in System Settings…** brings the explanation back.
+- **Windows** needs no permission; KE Pen introduces the feature once. Windows
+  can refuse to give KE Pen keyboard focus when the selector opens over another
+  app, so if **Esc** does nothing, click (or right-click) to cancel. Windows
+  also blocks input sent into windows running as administrator, so a quick
+  middle click over such a window cannot be given back.
+- **Linux** is not supported: Wayland forbids global interception and X11
+  already uses the middle click for paste.
+- **Scope.** The helper, `ke-pen-hold-helper`, acts only on the middle
+  button—never the keyboard or other buttons—and never saves, sends, or logs
   where you click. It is armed only while KE Pen could actually open the
   selector, and stops with KE Pen. See [PRIVACY.md](./PRIVACY.md),
   [SECURITY.md](./SECURITY.md), and the
   [threat model](./docs/MIDDLE_HOLD_CAPTURE_THREAT_MODEL.md).
-- **Windows note.** Windows blocks input sent into windows running as
-  administrator, so a quick middle click over such a window cannot be given
-  back.
+
+**If it stops working.**
+
+- *Tray shows "Hold to capture: allow in System Settings…"*: the helper is
+  waiting for its Accessibility approval. Choose it and follow the steps. After
+  installing a new version, macOS may treat the helper as new: if
+  **ke-pen-hold-helper** is listed and switched on but the tray still asks,
+  select it, remove it with **−**, and choose the tray item again.
+- *Tray shows "Hold to capture stopped — Restart"*: the helper failed several
+  times in a row (for example, macOS refused the event tap). Choose it to try
+  again; if it keeps stopping, turn the feature off and on, or restart KE Pen.
 
 ### Point it at your own endpoint
 
@@ -168,7 +189,8 @@ Open it from the tray with **Open settings file…**. The exact keys:
   "showInDock": true,
   "middleHoldCapture": true,
   "middleHoldDelayMs": 500,
-  "middleHoldPermissionExplained": false
+  "middleHoldIntroduced": "",
+  "middleHoldPrompted": ""
 }
 ```
 
@@ -187,7 +209,7 @@ and token to turn uploading on.
 | `showInDock` | macOS only. |
 | `middleHoldCapture` | Hold the middle button to freeze and capture. macOS and Windows only; always off on Linux. |
 | `middleHoldDelayMs` | How long the middle button must be held, 200–1500 ms (values outside are clamped). |
-| `middleHoldPermissionExplained` | Set once KE Pen has explained the macOS Accessibility approval. |
+| `middleHoldIntroduced`, `middleHoldPrompted` | Internal bookkeeping, not settings: the KE Pen version that last showed the one-time introduction (macOS explanation, Windows notice) and that last asked macOS for its Accessibility prompt. |
 
 A malformed file is ignored in favour of the defaults rather than crashing the
 app, and unknown or wrong-typed keys fall back per field.
@@ -423,15 +445,21 @@ npm run build
 npm run start:desktop
 ```
 
-Hold-to-capture has two more gates. `npm run verify:hold:proof` runs the real
-desktop build in an isolated proof mode (temporary data, a fake helper, an
-in-memory clipboard, no network) and checks that every display is frozen
-before any selector window is created, painted, shown, or focused.
+Hold to capture has three more gates. `npm run verify:hold:proof` runs the
+real desktop build in an isolated proof mode (temporary data, a fake helper, an
+in-memory clipboard, no network; development builds only, a packaged app
+ignores it) and checks that every display is frozen before any selector window
+is created, painted, shown, or focused, that each frame is its display's native
+size, and that Escape and a right click both cancel with nothing copied.
 `npm run verify:hold:mac` posts synthetic middle-button events through the real
 helper into a small test panel and checks click replay, hold timing, drag
-pass-through, a menu staying open through a hold, and crash recovery; it waits
-for ten idle seconds, stops if you touch the mouse, and needs Accessibility for
-the terminal running it.
+pass-through, a menu staying open through a hold, recovery after macOS
+disables a stalled event tap, that the helper is its own responsible process
+for Accessibility, and crash recovery; it waits for ten idle seconds, stops if
+you touch the mouse, and needs Accessibility for the terminal running it.
+`npm run verify:hold:win` does the same on Windows with `SendInput` into a
+test window, including a frozen helper whose hook Windows drops; CI runs it on
+every change.
 
 Create a native installer on its matching operating system:
 

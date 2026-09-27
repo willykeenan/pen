@@ -92,21 +92,43 @@ The complete abuse analysis and residual risks are recorded in
 `ke-pen-hold-helper` is the only native component that touches real input, and
 it is deliberately narrow:
 
-- it observes only the middle mouse button (macOS: an active session event tap
-  that returns every other button untouched first; Windows: a low-level mouse
-  hook that looks at moves only while a middle press is pending);
+- the operating system hands it every event its hook or tap covers, and it acts
+  only on the middle mouse button: on macOS an active session event tap for
+  "other" mouse buttons (down, up and drag) that returns every button except
+  the middle one untouched, first thing; on Windows a low-level mouse hook,
+  which Windows calls for every mouse message (buttons, wheel and moves), that
+  passes everything on except middle-button messages and looks at moves only
+  while a middle press is pending. Nothing it sees is stored;
 - it starts **disarmed** and is armed only by KE Pen's main process, and only
   while KE Pen is idle and could open the selector;
-- its stdin accepts exactly four commands—`config`, `arm`, `disarm`,
-  `quit`—none of which can carry a position, a button, or an event, so no
-  process can use it to post input of its choosing; the only events it posts
-  are copies of the person's own swallowed middle-button events;
+- its stdin accepts exactly five commands—`config`, `arm`, `disarm`,
+  `prompt`, `quit`—none of which can carry a position, a button, or an event,
+  so no process can use it to post input of its choosing; the only events it
+  posts are copies of the person's own swallowed middle-button events, and
+  `prompt` only asks macOS to show its own Accessibility alert for the helper;
 - its own replays are tagged and passed through, so they cannot loop;
 - it exits when stdin closes, when KE Pen exits, on `quit`, and on SIGTERM, and
   gives back any click it is still holding when it stops;
-- on macOS the Accessibility approval is attributed to KE Pen (the helper's
-  responsible process), and the helper ships inside the app bundle next to the
-  app executable, signed with the same identity as the app.
+- on macOS the **Accessibility approval belongs to the helper, not to KE
+  Pen**: the helper re-executes itself as its own "responsible process"
+  (macOS's disclaim spawn attribute), so macOS checks and lists
+  `ke-pen-hold-helper` itself. KE Pen never asks for Accessibility. KE Pen is an
+  Electron app whose `RunAsNode` fuse must stay on for the embedded MCP server,
+  so anything that can start KE Pen's executable could run code as KE Pen; with
+  the approval on the helper, that code gets nothing more than KE Pen's Screen
+  Recording approval (unchanged from 0.5), never the ability to post input;
+- packaged builds turn off the other ways to run code as KE Pen (the
+  `NODE_OPTIONS` and `--inspect` fuses, and loading the app from anywhere but
+  its asar), and ignore the development-only `--hold-proof` switch and its
+  helper override entirely;
+- the helper is signed with its own identifier (`dev.kestudios.pen.hold-helper`)
+  and the hardened runtime, then the whole bundle is signed and sealed, both by
+  the same signer. The published macOS download is signed with K&E Studios'
+  self-signed certificate (`KE Studios Local Code Signing`; not an Apple
+  Developer ID), so macOS keeps the helper's approval across updates signed
+  with it. Builds from source, and CI builds, are signed **ad hoc** unless
+  `KE_PEN_MAC_SIGN_IDENTITY` names a certificate, and macOS treats each such
+  build's helper as new code that needs approving again.
 
 The full analysis and residual risks are in
 [`docs/MIDDLE_HOLD_CAPTURE_THREAT_MODEL.md`](./docs/MIDDLE_HOLD_CAPTURE_THREAT_MODEL.md).
@@ -115,8 +137,9 @@ The AI host and model provider are separate trust boundaries. Review their
 tool-call UI, network behavior, and privacy policy before sharing sensitive
 screen content.
 
-The initial macOS and Windows downloads are not commercially code-signed, and
-the macOS build is not notarized. Verify the published SHA-256 manifest or
+The macOS and Windows downloads are not commercially code-signed (the macOS
+app carries K&E Studios' self-signed certificate), and the macOS build is not
+notarized. Verify the published SHA-256 manifest or
 build from the public source if this warning is unacceptable.
 
 Report security issues privately to william@kestudios.dev.

@@ -36,6 +36,7 @@
     "verify:toast:mac": "npm run electron:install && npm run build:desktop && node scripts/verify-shot-toast-runtime.mjs",
     "verify:hold:proof": "npm run electron:install && npm run build:desktop && node scripts/verify-hold-proof.mjs",
     "verify:hold:mac": "node scripts/verify-middle-hold-mac.mjs",
+    "verify:hold:win": "node scripts/verify-middle-hold-win.mjs",
     "verify:public": "node scripts/verify-public-release.mjs",
     "verify:package": "node scripts/verify-package.mjs",
     "checksums": "node scripts/write-release-checksums.mjs",

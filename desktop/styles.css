@@ -57,6 +57,14 @@ body.clearing {
   pointer-events: none;
 }
 
+/* KE Shot selector: the badge steps out of the way of the pointer. */
+body[data-badge-corner="bottom-right"] #badge {
+  top: auto;
+  left: auto;
+  right: 18px;
+  bottom: 18px;
+}
+
 #badge strong {
   color: #fff;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

@@ -25,11 +25,26 @@ extraResources:
 
 artifactName: KE-Pen-${version}-${os}-${arch}.${ext}
 
+# Electron fuses, flipped in every packaged build. The embedded MCP server is
+# started as KE Pen's own executable in Node mode (ELECTRON_RUN_AS_NODE), so
+# runAsNode stays on; every other way to run code as KE Pen is off. Hold to
+# capture's Accessibility approval belongs to the helper, not to KE Pen, so
+# running code as KE Pen never borrows it (docs/MIDDLE_HOLD_CAPTURE_THREAT_MODEL.md).
+electronFuses:
+  runAsNode: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  onlyLoadAppFromAsar: true
+
 mac:
   appId: dev.kestudios.pen
   category: public.app-category.developer-tools
   icon: assets/Pen.icns
-  identity: null
+  # Signed by scripts/sign-mac.cjs after the fuses are flipped: ad hoc for
+  # public CI builds, or the identity in KE_PEN_MAC_SIGN_IDENTITY. The hold
+  # helper is signed first with its own identifier, then the whole bundle.
+  identity: "-"
+  sign: scripts/sign-mac.cjs
   target:
     - dmg
     - zip

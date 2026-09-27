@@ -32,6 +32,24 @@ export function captureThumbnailSize(displays: readonly CaptureDisplay[]): { wid
   };
 }
 
+// A display's own pixel size. desktopCapturer fits every screen into the one
+// shared thumbnail size, which upscales a lower-resolution display beside a
+// Retina one; frames are brought back to exactly this size before use.
+export function nativeCaptureSize(display: CaptureDisplay): { width: number; height: number } {
+  return {
+    width: Math.max(1, Math.round(display.size.width * display.scaleFactor)),
+    height: Math.max(1, Math.round(display.size.height * display.scaleFactor)),
+  };
+}
+
+export function needsNativeResize(
+  image: { width: number; height: number },
+  display: CaptureDisplay,
+): boolean {
+  const native = nativeCaptureSize(display);
+  return image.width !== native.width || image.height !== native.height;
+}
+
 // Matches by exact display id first; falls back to list order when the counts
 // agree, and to the only source for the primary display. A display with no
 // usable source is dropped rather than shown with somebody else's pixels.

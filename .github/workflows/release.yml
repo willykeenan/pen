@@ -71,6 +71,9 @@ jobs:
       - name: Verify hold-to-capture runtime (freeze, select, cancel)
         if: runner.os != 'Linux'
         run: npm run verify:hold:proof
+      - name: Synthetic Windows hold integration (real helper, SendInput)
+        if: runner.os == 'Windows'
+        run: npm run verify:hold:win
       - run: npm run ${{ matrix.script }}
       - name: Verify packaged source has no private KE access wiring
         run: npm run verify:public

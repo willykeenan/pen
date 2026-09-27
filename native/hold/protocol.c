@@ -148,6 +148,8 @@ int hold_parse_command(const char *line, size_t length, hold_command_t *out) {
     out->kind = HOLD_CMD_DISARM;
   } else if (strcmp(command, "quit") == 0) {
     out->kind = HOLD_CMD_QUIT;
+  } else if (strcmp(command, "prompt") == 0) {
+    out->kind = HOLD_CMD_PROMPT;
   } else {
     return HOLD_PARSE_UNKNOWN_COMMAND;
   }

@@ -77,17 +77,17 @@ for (const binary of helperBinaries) {
   scannedBinaries += 1;
 }
 
-// The helper's stdin contract is four fixed commands. Nothing that reaches it
+// The helper's stdin contract is five fixed commands. Nothing that reaches it
 // may describe a position, a button or an event: that would let any process
-// with access to its stdin borrow KE Pen's Accessibility approval to click.
+// with access to its stdin borrow the helper's Accessibility approval to click.
 const protocolSource = await readFile(path.join(root, "native", "hold", "protocol.c"), "utf8");
 const acceptedKeys = [...protocolSource.matchAll(/strcmp\(member->key, "([^"]+)"\)/g)].map((match) => match[1]);
 assert.deepEqual([...new Set(acceptedKeys)].sort(), ["cmd", "thresholdMs", "v"]);
 const acceptedCommands = [...protocolSource.matchAll(/strcmp\(command, "([^"]+)"\)/g)].map((match) => match[1]);
-assert.deepEqual([...new Set(acceptedCommands)].sort(), ["arm", "config", "disarm", "quit"]);
+assert.deepEqual([...new Set(acceptedCommands)].sort(), ["arm", "config", "disarm", "prompt", "quit"]);
 const holdCore = await readFile(path.join(root, "desktop", "hold-core.ts"), "utf8");
 const encoded = [...holdCore.matchAll(/return `(\{[^`]*\})\\n`;/g)].map((match) => match[1]);
-assert.equal(encoded.length, 4, "hold-core must encode exactly four commands");
+assert.equal(encoded.length, 5, "hold-core must encode exactly five commands");
 for (const line of encoded) {
   assert.doesNotMatch(line, /"(?:x|y|button|point|location|event|key)"/i, `hold command ${line}`);
 }

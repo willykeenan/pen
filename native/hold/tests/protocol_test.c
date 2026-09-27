@@ -8,7 +8,7 @@ static int parse(const char *line, hold_command_t *out) {
   return hold_parse_command(line, strlen(line), out);
 }
 
-static void test_accepts_the_four_commands(void) {
+static void test_accepts_the_five_commands(void) {
   hold_command_t command;
   CHECK_EQ(parse("{\"cmd\":\"arm\"}", &command), HOLD_PARSE_OK);
   CHECK_EQ(command.kind, HOLD_CMD_ARM);
@@ -16,6 +16,11 @@ static void test_accepts_the_four_commands(void) {
   CHECK_EQ(command.kind, HOLD_CMD_DISARM);
   CHECK_EQ(parse("{\"cmd\":\"quit\"}", &command), HOLD_PARSE_OK);
   CHECK_EQ(command.kind, HOLD_CMD_QUIT);
+  CHECK_EQ(parse("{\"cmd\":\"prompt\"}", &command), HOLD_PARSE_OK);
+  CHECK_EQ(command.kind, HOLD_CMD_PROMPT);
+  /* The prompt carries nothing either. */
+  CHECK_EQ(parse("{\"cmd\":\"prompt\",\"thresholdMs\":300}", &command), HOLD_PARSE_UNKNOWN_KEY);
+  CHECK_EQ(parse("{\"cmd\":\"prompt\",\"x\":1}", &command), HOLD_PARSE_UNKNOWN_KEY);
   CHECK_EQ(parse("{\"cmd\":\"config\",\"thresholdMs\":750}", &command), HOLD_PARSE_OK);
   CHECK_EQ(command.kind, HOLD_CMD_CONFIG);
   CHECK_EQ(command.threshold_ms, 750);
@@ -152,7 +157,7 @@ static void test_messages_carry_no_positions(void) {
 }
 
 int main(void) {
-  RUN(test_accepts_the_four_commands);
+  RUN(test_accepts_the_five_commands);
   RUN(test_threshold_values_are_bounded_then_clamped);
   RUN(test_refuses_anything_that_could_describe_input);
   RUN(test_refuses_malformed_lines);

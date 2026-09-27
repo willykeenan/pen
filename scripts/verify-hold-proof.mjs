@@ -1,10 +1,11 @@
 // Runtime proof for hold to capture. Launches the real desktop build in an
 // isolated --hold-proof mode: temporary user data, a fake hold helper (never
 // the real input tap), an in-memory clipboard shim and no upload endpoint.
-// The proof drives two holds through the real supervisor and main process:
+// The proof drives three holds through the real supervisor and main process:
 //   1. freeze → frozen overlays on every display → select a region → the crop
 //      reaches the clipboard shim and a local copy, with the exact pixel size;
-//   2. freeze → Escape → nothing reaches the clipboard.
+//   2. freeze → Escape → nothing reaches the clipboard;
+//   3. freeze → right click → nothing reaches the clipboard.
 // It records the order of capture, overlay creation, showing and focus.
 //
 // Overlays stay hidden unless KE_PEN_HOLD_PROOF_SHOW=1, so nothing takes over
@@ -33,7 +34,7 @@ const env = {
   ...process.env,
   KE_PEN_HOLD_HELPER_OVERRIDE: path.join(root, "test", "fixtures", "fake-hold-helper.mjs"),
   FAKE_HOLD_MODE: "hold-on-arm",
-  FAKE_HOLD_COUNT: "2",
+  FAKE_HOLD_COUNT: "3",
   FAKE_HOLD_VERSION: version,
 };
 delete env.ELECTRON_RUN_AS_NODE;

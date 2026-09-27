@@ -48,12 +48,16 @@ CDN. Do not capture anything you would not hand over permanently.
 Hold to capture uses a small helper process, `ke-pen-hold-helper`, to hold back
 the middle mouse button:
 
-- It watches **only the middle mouse button**. It does not see the keyboard,
-  other buttons, or scrolling, and it looks at pointer movement only while a
-  middle press is being held, to tell a drag from a still hold.
+- It acts **only on the middle mouse button**. The operating system still
+  hands it every event its hook covers: on macOS the other mouse buttons'
+  presses, releases and drags; on Windows every mouse message, including the
+  left and right buttons, the wheel, and pointer moves. The helper passes all
+  of those on untouched and keeps none of them. It never sees the keyboard. It
+  looks at pointer movement only while a middle press is being held, to tell a
+  drag from a still hold.
 - It keeps the position of the press in memory for that one press. Positions,
-  timings, and click counts are never stored, logged, or sent to KE Pen; the
-  helper reports only that a hold happened.
+  timings, and click counts are never saved, logged, or sent anywhere, not
+  even to KE Pen; the helper reports only that a hold happened.
 - It gives every quick click back, unchanged, at the place it happened.
 - When a hold fires, KE Pen captures the screen once, in memory, to show the
   frozen selector. Only the region you drag is kept, exactly like any other KE
@@ -64,9 +68,10 @@ the middle mouse button:
   directory: whether the helper is running, its version, and how often it was
   restarted. No positions and no screen content.
 
-On macOS the helper needs Accessibility approval for KE Pen. Turn the feature
-off from the tray (**Hold middle button to capture**) to stop the helper
-entirely.
+On macOS the helper needs its own Accessibility approval; System Settings
+lists it as `ke-pen-hold-helper`. KE Pen itself never asks for Accessibility.
+Turn the feature off from the tray (**Hold middle button to capture**) to stop
+the helper entirely.
 
 ## What is stored locally
 

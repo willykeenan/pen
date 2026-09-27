@@ -177,8 +177,9 @@ static void test_down_after_fired_without_up_starts_fresh(void) {
 
 static void test_tap_reset_and_shutdown_replay_a_pending_click(void) {
   hold_machine_t machine = armed_machine();
+  /* The button is already up when the tap comes back: its up went by. */
   hold_on_input(&machine, HOLD_INPUT_DOWN, 1, 1);
-  CHECK_EQ(hold_on_tap_reset(&machine),
+  CHECK_EQ(hold_on_tap_reset(&machine, 0, 0),
            HOLD_ACT_CANCEL_TIMER | HOLD_ACT_REPLAY_DOWN | HOLD_ACT_REPLAY_UP);
   CHECK_EQ(machine.state, HOLD_IDLE);
   CHECK_EQ(machine.armed, 1);
@@ -189,12 +190,109 @@ static void test_tap_reset_and_shutdown_replay_a_pending_click(void) {
   CHECK_EQ(hold_on_shutdown(&machine),
            HOLD_ACT_CANCEL_TIMER | HOLD_ACT_REPLAY_DOWN | HOLD_ACT_REPLAY_UP);
   CHECK_EQ(machine.armed, 0);
+  CHECK_EQ(machine.state, HOLD_IDLE);
 
   hold_set_armed(&machine, 1);
   hold_on_input(&machine, HOLD_INPUT_DOWN, 1, 1);
   hold_on_timer(&machine, machine.token);
-  CHECK_EQ(hold_on_tap_reset(&machine), HOLD_ACT_NONE);
+  CHECK_EQ(hold_on_tap_reset(&machine, 0, 0), HOLD_ACT_NONE);
+  CHECK_EQ(machine.state, HOLD_IDLE);
+  hold_on_input(&machine, HOLD_INPUT_DOWN, 1, 1);
+  hold_on_timer(&machine, machine.token);
+  /* Shutdown never keeps a press: there is nobody left to swallow its up. */
   CHECK_EQ(hold_on_shutdown(&machine), HOLD_ACT_NONE);
+  CHECK_EQ(machine.state, HOLD_IDLE);
+}
+
+/* Reviewer case: a hold has fired and KE Pen has disarmed for its selector
+ * when macOS re-enables a timed-out tap. The button is still held, so the
+ * matching up must still be swallowed rather than reach the app. */
+static void test_fired_press_survives_tap_reset_while_held(void) {
+  hold_machine_t machine = armed_machine();
+  hold_on_input(&machine, HOLD_INPUT_DOWN, 10, 10);
+  CHECK_EQ(hold_on_timer(&machine, machine.token), HOLD_ACT_EMIT_HOLD);
+  hold_set_armed(&machine, 0);
+  CHECK_EQ(hold_on_tap_reset(&machine, 1, 0), HOLD_ACT_NONE);
+  CHECK_EQ(machine.state, HOLD_FIRED);
+  CHECK_EQ(hold_on_input(&machine, HOLD_INPUT_UP, 10, 10), HOLD_ACT_SWALLOW);
+  CHECK_EQ(machine.state, HOLD_IDLE);
+}
+
+/* A pending press that is still held keeps waiting: the hold must not turn
+ * into a click that could open a link or close the menu being captured. */
+static void test_pending_press_survives_tap_reset_while_held(void) {
+  hold_machine_t machine = armed_machine();
+  uint32_t token;
+  hold_on_input(&machine, HOLD_INPUT_DOWN, 10, 10);
+  token = machine.token;
+  CHECK_EQ(hold_on_tap_reset(&machine, 1, 0), HOLD_ACT_NONE);
+  CHECK_EQ(machine.state, HOLD_PENDING);
+  CHECK_EQ(hold_on_timer(&machine, token), HOLD_ACT_EMIT_HOLD);
+  CHECK_EQ(hold_on_input(&machine, HOLD_INPUT_UP, 10, 10), HOLD_ACT_SWALLOW);
+
+  /* Released before the threshold after the reset: still an ordinary click. */
+  hold_on_input(&machine, HOLD_INPUT_DOWN, 10, 10);
+  CHECK_EQ(hold_on_tap_reset(&machine, 1, 0), HOLD_ACT_NONE);
+  CHECK_EQ(hold_on_input(&machine, HOLD_INPUT_UP, 10, 10),
+           HOLD_ACT_SWALLOW | HOLD_ACT_CANCEL_TIMER | HOLD_ACT_REPLAY_DOWN | HOLD_ACT_REPLAY_UP);
+}
+
+/* A new press began while the tap was off: the app already has its down, so
+ * the old press is given back and the new one belongs to the app. */
+static void test_new_press_while_unwatched_belongs_to_the_app(void) {
+  hold_machine_t machine = armed_machine();
+  uint32_t token;
+  hold_on_input(&machine, HOLD_INPUT_DOWN, 10, 10);
+  token = machine.token;
+  CHECK_EQ(hold_on_tap_reset(&machine, 1, 1),
+           HOLD_ACT_CANCEL_TIMER | HOLD_ACT_REPLAY_DOWN | HOLD_ACT_REPLAY_UP);
+  CHECK_EQ(machine.state, HOLD_PASSTHROUGH);
+  CHECK_EQ(hold_on_timer(&machine, token), HOLD_ACT_NONE);
+  CHECK_EQ(hold_on_input(&machine, HOLD_INPUT_DRAG, 90, 90), HOLD_ACT_NONE);
+  CHECK_EQ(hold_on_input(&machine, HOLD_INPUT_UP, 90, 90), HOLD_ACT_NONE);
+  CHECK_EQ(machine.state, HOLD_IDLE);
+
+  /* The same from a fired press: nothing to replay, the up passes. */
+  hold_on_input(&machine, HOLD_INPUT_DOWN, 10, 10);
+  hold_on_timer(&machine, machine.token);
+  CHECK_EQ(hold_on_tap_reset(&machine, 1, 1), HOLD_ACT_NONE);
+  CHECK_EQ(machine.state, HOLD_PASSTHROUGH);
+  CHECK_EQ(hold_on_input(&machine, HOLD_INPUT_UP, 10, 10), HOLD_ACT_NONE);
+
+  /* And from idle. */
+  CHECK_EQ(hold_on_tap_reset(&machine, 1, 1), HOLD_ACT_NONE);
+  CHECK_EQ(machine.state, HOLD_PASSTHROUGH);
+  CHECK_EQ(hold_on_tap_reset(&machine, 0, 0), HOLD_ACT_NONE);
+  CHECK_EQ(machine.state, HOLD_IDLE);
+}
+
+/* Reviewer case, mirrored for Windows: a low-level hook the system dropped
+ * mid-press is re-installed and the machine is reset with the button up.
+ * Every state must come back to idle, so hold to capture works again, and a
+ * press still pending is given back as a click. */
+static void test_hook_loss_recovery_returns_every_state_to_idle(void) {
+  hold_machine_t machine = armed_machine();
+  hold_on_input(&machine, HOLD_INPUT_DOWN, 10, 10);
+  CHECK_EQ(hold_on_tap_reset(&machine, 0, 0),
+           HOLD_ACT_CANCEL_TIMER | HOLD_ACT_REPLAY_DOWN | HOLD_ACT_REPLAY_UP);
+  CHECK_EQ(machine.state, HOLD_IDLE);
+
+  hold_on_input(&machine, HOLD_INPUT_DOWN, 10, 10);
+  hold_on_timer(&machine, machine.token);
+  CHECK_EQ(hold_on_tap_reset(&machine, 0, 0), HOLD_ACT_NONE);
+  CHECK_EQ(machine.state, HOLD_IDLE);
+
+  hold_set_armed(&machine, 0);
+  hold_on_input(&machine, HOLD_INPUT_DOWN, 10, 10);
+  CHECK_EQ(machine.state, HOLD_PASSTHROUGH);
+  CHECK_EQ(hold_on_tap_reset(&machine, 0, 0), HOLD_ACT_NONE);
+  CHECK_EQ(machine.state, HOLD_IDLE);
+
+  /* And the next press is caught again. */
+  hold_set_armed(&machine, 1);
+  CHECK_EQ(hold_on_input(&machine, HOLD_INPUT_DOWN, 10, 10),
+           HOLD_ACT_SWALLOW | HOLD_ACT_STORE_ORIGIN | HOLD_ACT_START_TIMER);
+  CHECK_EQ(hold_on_timer(&machine, machine.token), HOLD_ACT_EMIT_HOLD);
 }
 
 static void test_threshold_is_clamped(void) {
@@ -251,6 +349,7 @@ typedef struct {
   long swallowed_downs;
   long holds;
   long violations;
+  int orphan_up_ok;         /* an unwatched period may leave the app unbalanced */
 } model_t;
 
 static void violation(model_t *model, const char *what, long step) {
@@ -331,8 +430,10 @@ static void test_property_every_swallowed_down_resolves_once(void) {
       apply(&model, actions, 1, HOLD_INPUT_DOWN, 0, step);
     } else if (roll < 44) {
       actions = hold_on_input(&machine, HOLD_INPUT_UP, x, y);
-      /* Only an up the machine had no press for may reach the app unbalanced. */
-      apply(&model, actions, 1, HOLD_INPUT_UP, before == HOLD_IDLE, step);
+      /* Only an up the machine had no press for may reach the app unbalanced,
+       * or one that follows a period nothing was watching. */
+      apply(&model, actions, 1, HOLD_INPUT_UP, before == HOLD_IDLE || model.orphan_up_ok, step);
+      model.orphan_up_ok = 0;
       if (machine.state != HOLD_IDLE) violation(&model, "an up left the machine busy", step);
     } else if (roll < 64) {
       actions = hold_on_input(&machine, HOLD_INPUT_DRAG, x, y);
@@ -348,8 +449,15 @@ static void test_property_every_swallowed_down_resolves_once(void) {
       actions = hold_set_armed(&machine, (int)(next_random() % 3u != 0u));
       apply(&model, actions, 0, HOLD_INPUT_DOWN, 0, step);
     } else if (roll < 90) {
-      actions = hold_on_tap_reset(&machine);
+      /* What reached the app while nothing was watching, then the reset. */
+      int button_down = (int)(next_random() % 2u);
+      int new_press = button_down && (next_random() % 3u == 0u);
+      if (new_press) deliver(&model, HOLD_INPUT_DOWN, 0, step);
+      if (!button_down) deliver(&model, HOLD_INPUT_UP, 1, step);
+      actions = hold_on_tap_reset(&machine, button_down, new_press);
+      /* Replays after an unwatched down may end the app's press early. */
       apply(&model, actions, 0, HOLD_INPUT_DOWN, 0, step);
+      if (new_press || !button_down) model.orphan_up_ok = 1;
     } else if (roll < 95) {
       hold_set_threshold(&machine, (long)(next_random() % 3000u));
     } else {
@@ -388,6 +496,10 @@ int main(void) {
   RUN(test_double_down_replays_the_lost_click_first);
   RUN(test_down_after_fired_without_up_starts_fresh);
   RUN(test_tap_reset_and_shutdown_replay_a_pending_click);
+  RUN(test_fired_press_survives_tap_reset_while_held);
+  RUN(test_pending_press_survives_tap_reset_while_held);
+  RUN(test_new_press_while_unwatched_belongs_to_the_app);
+  RUN(test_hook_loss_recovery_returns_every_state_to_idle);
   RUN(test_threshold_is_clamped);
   RUN(test_rearm_after_fire);
   RUN(test_state_names);

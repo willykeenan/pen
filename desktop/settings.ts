@@ -23,7 +23,11 @@ export interface ShotSettings {
   // Hold the middle mouse button to freeze the screen and open the selector.
   middleHoldCapture: boolean;
   middleHoldDelayMs: number;
-  middleHoldPermissionExplained: boolean;
+  // Internal bookkeeping, not settings: the KE Pen version that last showed
+  // the one-time introduction (macOS setup explanation, Windows notice), and
+  // the version that last asked macOS for its Accessibility alert.
+  middleHoldIntroduced: string;
+  middleHoldPrompted: string;
 }
 
 export interface LocalStateOptions {
@@ -74,7 +78,8 @@ export function defaultSettings(
     showInDock: platform === "darwin",
     middleHoldCapture: holdCaptureSupported(platform),
     middleHoldDelayMs: HOLD_DEFAULT_DELAY_MS,
-    middleHoldPermissionExplained: false,
+    middleHoldIntroduced: "",
+    middleHoldPrompted: "",
   };
 }
 
@@ -101,11 +106,13 @@ export function normalizeSettings(
       holdCaptureSupported(platform) &&
       (typeof raw.middleHoldCapture === "boolean" ? raw.middleHoldCapture : defaults.middleHoldCapture),
     middleHoldDelayMs: clampHoldDelay(raw.middleHoldDelayMs, defaults.middleHoldDelayMs),
-    middleHoldPermissionExplained:
-      typeof raw.middleHoldPermissionExplained === "boolean"
-        ? raw.middleHoldPermissionExplained
-        : defaults.middleHoldPermissionExplained,
+    middleHoldIntroduced: normalizeVersionMark(raw.middleHoldIntroduced, defaults.middleHoldIntroduced),
+    middleHoldPrompted: normalizeVersionMark(raw.middleHoldPrompted, defaults.middleHoldPrompted),
   };
+}
+
+function normalizeVersionMark(value: unknown, fallback: string): string {
+  return typeof value === "string" && /^[0-9A-Za-z.+-]{0,32}$/.test(value) ? value : fallback;
 }
 
 // A hand-edited settings file is the only way to configure uploading, so a

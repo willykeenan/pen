@@ -2,11 +2,13 @@
  * KE Pen hold helper stdio protocol, version 1.
  *
  * One JSON object per line in each direction, at most HOLD_LINE_MAX bytes.
- * The helper accepts exactly four commands and nothing else:
+ * The helper accepts exactly five commands and nothing else:
  *
  *   {"cmd":"config","thresholdMs":500}
  *   {"cmd":"arm"}
  *   {"cmd":"disarm"}
+ *   {"cmd":"prompt"}   ask the OS to show its permission prompt (macOS only;
+ *                      only ever sent after the person chose to set it up)
  *   {"cmd":"quit"}
  *
  * An optional "v":1 member is allowed on any command. No command carries a
@@ -31,7 +33,8 @@ typedef enum {
   HOLD_CMD_CONFIG = 1,
   HOLD_CMD_ARM = 2,
   HOLD_CMD_DISARM = 3,
-  HOLD_CMD_QUIT = 4
+  HOLD_CMD_QUIT = 4,
+  HOLD_CMD_PROMPT = 5
 } hold_command_kind_t;
 
 typedef struct {

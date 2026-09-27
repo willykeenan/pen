@@ -147,6 +147,14 @@ export class HoldHelperSupervisor {
     if (this.childReady) this.send(armed ? { cmd: "arm" } : { cmd: "disarm" });
   }
 
+  // macOS only: asks the helper to show the system Accessibility alert for
+  // itself. Sent only after the person chose to set hold to capture up.
+  requestPermissionPrompt(): boolean {
+    if (!this.childReady || this.status.state !== "needs-permission") return false;
+    this.send({ cmd: "prompt" });
+    return true;
+  }
+
   configure(thresholdMs: number): void {
     const next = clampHoldDelay(thresholdMs);
     if (next === this.thresholdMs) return;
