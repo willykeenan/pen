@@ -167,11 +167,11 @@ touch human UI, capture a desktop, use the clipboard, or upload.
   paste an endpoint and token into a local settings file; changing the KE Shot
   hotkey requires restarting the app. Deleting a shot depends on the user's own
   endpoint implementing `DELETE /<id>`.
-- Hold to capture is macOS and Windows only. Ad hoc signed macOS builds (your
-  own, or CI's) lose the helper's approval when the app changes; a quick middle
+- Hold to capture is macOS and Windows only. Ad-hoc signed macOS builds,
+  including the public downloads, may need the helper approved again after an update; a quick middle
   click over an elevated Windows window cannot be given back.
-- The published macOS download is signed with K&E Studios' self-signed
-  certificate, not an Apple Developer ID, and is not notarized; Windows and
+- The published macOS download is ad-hoc signed, not signed with an Apple
+  Developer ID, and is not notarized; Windows and
   Linux builds are unsigned.
 - No claim of model training, autonomous authority, broad adoption, or
   universal host compatibility is made.

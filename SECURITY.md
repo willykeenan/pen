@@ -123,12 +123,10 @@ it is deliberately narrow:
   helper override entirely;
 - the helper is signed with its own identifier (`dev.kestudios.pen.hold-helper`)
   and the hardened runtime, then the whole bundle is signed and sealed, both by
-  the same signer. The published macOS download is signed with K&E Studios'
-  self-signed certificate (`KE Studios Local Code Signing`; not an Apple
-  Developer ID), so macOS keeps the helper's approval across updates signed
-  with it. Builds from source, and CI builds, are signed **ad hoc** unless
-  `KE_PEN_MAC_SIGN_IDENTITY` names a certificate, and macOS treats each such
-  build's helper as new code that needs approving again.
+  the same signer. Published CI builds are signed **ad hoc**, so macOS treats
+  each updated helper as new code that may need approving again. Source builds
+  can use a stable certificate through `KE_PEN_MAC_SIGN_IDENTITY`; that local
+  signing option is separate from the public download.
 
 The full analysis and residual risks are in
 [`docs/MIDDLE_HOLD_CAPTURE_THREAT_MODEL.md`](./docs/MIDDLE_HOLD_CAPTURE_THREAT_MODEL.md).
@@ -138,7 +136,7 @@ tool-call UI, network behavior, and privacy policy before sharing sensitive
 screen content.
 
 The macOS and Windows downloads are not commercially code-signed (the macOS
-app carries K&E Studios' self-signed certificate), and the macOS build is not
+app is ad-hoc signed), and the macOS build is not
 notarized. Verify the published SHA-256 manifest or
 build from the public source if this warning is unacceptable.
 
