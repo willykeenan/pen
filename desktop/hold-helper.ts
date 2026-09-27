@@ -216,7 +216,7 @@ export class HoldHelperSupervisor {
         }
         this.childReady = true;
         this.clearTimer("readyTimer");
-        this.status.helperVersion = message.version;
+        this.setStatus({ helperVersion: message.version });
         this.send({ cmd: "config", thresholdMs: this.thresholdMs });
         this.send(this.armed ? { cmd: "arm" } : { cmd: "disarm" });
         return;

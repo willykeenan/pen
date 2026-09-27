@@ -482,7 +482,7 @@ function startHoldCapture(): void {
     onStatus: (status) => {
       const previous = holdStatus?.state;
       holdStatus = status;
-      void writeHoldStatus(status);
+      queueHoldStatusWrite();
       refreshHoldArm();
       if (previous !== status.state) updateTrayMenu();
       if (status.state === "needs-permission") {
@@ -549,6 +549,17 @@ async function runHoldShot(): Promise<void> {
     if (holdProof) holdProof.runsCompleted += 1;
     refreshHoldArm();
   }
+}
+
+// Status changes arrive in quick bursts (starting, then needs-permission or
+// active). Writes are chained and each one records the status current when it
+// runs, so the file never ends up holding an older state than the app.
+let holdStatusWrites: Promise<void> = Promise.resolve();
+
+function queueHoldStatusWrite(): void {
+  holdStatusWrites = holdStatusWrites
+    .then(() => (holdStatus ? writeHoldStatus(holdStatus) : undefined))
+    .catch(() => undefined);
 }
 
 async function writeHoldStatus(status: HoldHelperStatus): Promise<void> {
