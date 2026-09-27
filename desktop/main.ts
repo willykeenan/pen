@@ -19,7 +19,7 @@ import {
   type NativeImage,
 } from "electron";
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, copyFile, cp, mkdir, writeFile } from "node:fs/promises";
+import { chmod, copyFile, cp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { agentDisplayRuntimePaths } from "../src/agent-display-protocol.js";
 import { AnnotationStore } from "../src/store.js";
@@ -27,8 +27,28 @@ import type { AnnotationRecord } from "../src/types.js";
 import { AgentDisplayBroker } from "./agent-display-broker.js";
 import { AgentDisplayManager } from "./agent-display-manager.js";
 import { cancelActiveRegionCapture, captureRegion } from "./capture.js";
-import { SettingsStore, ShotHistoryStore, type ShotSettings } from "./settings.js";
-import { createShotRuntime, type ShotRuntime } from "./shot.js";
+import {
+  captureThumbnailSize,
+  displayForPoint,
+  matchCapturesToDisplays,
+} from "./display-capture-core.js";
+import {
+  holdCaptureSupported,
+  holdDelayChoices,
+  holdHelperPath,
+  overlayBaseline,
+  runHoldFlow,
+  shouldArmHold,
+} from "./hold-core.js";
+import { HoldHelperSupervisor, type HoldHelperStatus } from "./hold-helper.js";
+import {
+  SettingsStore,
+  ShotHistoryStore,
+  writePrivateFile,
+  type ShotSettings,
+} from "./settings.js";
+import { createShotRuntime, type ShotClipboard, type ShotNotice, type ShotRuntime } from "./shot.js";
+import { dismissShotLinkToast, presentShotNotice } from "./shot-toast.js";
 import {
   computeRegionCropPixels,
   formatAccelerator,
@@ -71,6 +91,13 @@ const AGENT_DISPLAY_PROOF = process.argv
   .find((argument) => argument.startsWith("--agent-display-proof="))
   ?.slice("--agent-display-proof=".length);
 const IS_AGENT_DISPLAY_PROOF = Boolean(AGENT_DISPLAY_PROOF);
+// Runtime proof for hold to capture: an isolated user-data directory, a fake
+// helper, an in-memory clipboard and no network. See scripts/verify-hold-proof.mjs.
+const HOLD_PROOF = process.argv
+  .find((argument) => argument.startsWith("--hold-proof="))
+  ?.slice("--hold-proof=".length);
+const IS_HOLD_PROOF = Boolean(HOLD_PROOF);
+const HOLD_STATUS_FILE = "hold-status.json";
 const ACTIVATE_ON_START = process.argv.includes("--activate-on-start");
 const SHORTCUT = process.platform === "darwin" ? "Control+Alt+Command+P" : "Control+Alt+P";
 const SHORTCUT_LABEL = process.platform === "darwin" ? "⌃⌥⌘P" : "Ctrl+Alt+P";
@@ -81,7 +108,10 @@ const COPY_MODE_LABELS: Record<CopyMode, string> = {
 };
 
 app.setName("KE Pen");
-if (IS_AGENT_DISPLAY_PROOF && process.platform === "darwin") {
+if (IS_HOLD_PROOF) {
+  app.setPath("userData", path.join(path.resolve(HOLD_PROOF!), "user-data"));
+}
+if ((IS_AGENT_DISPLAY_PROOF || IS_HOLD_PROOF) && process.platform === "darwin") {
   app.setActivationPolicy("accessory");
 }
 if (process.platform === "linux") {
@@ -95,7 +125,7 @@ if (process.platform === "linux") {
 }
 app.enableSandbox();
 
-if (!IS_SMOKE_TEST && !IS_AGENT_DISPLAY_PROOF && !app.requestSingleInstanceLock()) {
+if (!IS_SMOKE_TEST && !IS_AGENT_DISPLAY_PROOF && !IS_HOLD_PROOF && !app.requestSingleInstanceLock()) {
   app.quit();
 }
 
@@ -118,7 +148,27 @@ let dockCaptureArmed = false;
 let agentDisplays: AgentDisplayManager | null = null;
 let agentDisplayBroker: AgentDisplayBroker | null = null;
 let agentDisplayStartupError: string | null = null;
+let overlayFrozen = false;
+let holdHelper: HoldHelperSupervisor | null = null;
+let holdStatus: HoldHelperStatus | null = null;
+let holdInFlight = false;
+let holdPermissionDialogOpen = false;
+let accessibilityWatchTimer: NodeJS.Timeout | null = null;
+let holdProof: HoldProofState | null = null;
+const paintedOverlays = new Set<number>();
+let overlayPaintWaiter: (() => void) | null = null;
 
+interface HoldProofState {
+  show: boolean;
+  trace: Array<{ event: string; atMs: number }>;
+  startedAt: number;
+  clipboardImages: Array<{ width: number; height: number }>;
+  notices: string[];
+  captureSource: "desktopCapturer" | "synthetic";
+  overlayLevel: string | null;
+  holdsReceived: number;
+  runsCompleted: number;
+}
 if (IS_SMOKE_TEST) {
   void app.whenReady().then(() => {
     process.stdout.write(
@@ -151,6 +201,8 @@ if (IS_SMOKE_TEST) {
     cancelActiveRegionCapture();
     finishShotOverlay(null);
     closeOverlays();
+    stopAccessibilityWatch();
+    void holdHelper?.stop();
     void agentDisplayBroker?.stop();
     void agentDisplays?.shutdown();
   });
@@ -159,7 +211,11 @@ if (IS_SMOKE_TEST) {
   void app
     .whenReady()
     .then(async () => {
-      if (IS_AGENT_DISPLAY_PROOF && process.platform === "darwin") app.dock?.hide();
+      if ((IS_AGENT_DISPLAY_PROOF || IS_HOLD_PROOF) && process.platform === "darwin") app.dock?.hide();
+      if (IS_HOLD_PROOF) {
+        await runHoldProof();
+        return;
+      }
       await createAgentDisplayRuntime();
       if (IS_AGENT_DISPLAY_PROOF) {
         await runAgentDisplayProof();
@@ -172,6 +228,7 @@ if (IS_SMOKE_TEST) {
       // KE Shot is additive: if its local state cannot be prepared, KE Pen still
       // has to come up exactly as it did before.
       await createShot().catch(() => undefined);
+      startHoldCapture();
       applyDockVisibility();
       applyDockMenu();
       createTray();
@@ -304,10 +361,16 @@ function validateAgentDisplayProof(proof: { image: NativeImage; accessibility: u
   }
 }
 
-async function createShot(): Promise<void> {
+interface ShotOverrides {
+  picturesDirectory?: string;
+  clipboard?: ShotClipboard;
+  notify?: ShotNotice;
+}
+
+async function createShot(overrides: ShotOverrides = {}): Promise<void> {
   const options = {
     directory: app.getPath("userData"),
-    picturesDirectory: picturesDirectory(),
+    picturesDirectory: overrides.picturesDirectory ?? picturesDirectory(),
   };
   const settings = new SettingsStore(options);
   const history = new ShotHistoryStore(options);
@@ -320,9 +383,14 @@ async function createShot(): Promise<void> {
     captureRegion: () =>
       captureRegion({
         ensureAccess: ensureScreenAccess,
-        captureWithOverlay: captureShotRegionWithOverlay,
+        captureWithOverlay: () => captureShotRegionWithOverlay(),
       }),
-    onChange: () => updateTrayMenu(),
+    onChange: () => {
+      updateTrayMenu();
+      refreshHoldArm();
+    },
+    ...(overrides.clipboard ? { clipboard: overrides.clipboard } : {}),
+    ...(overrides.notify ? { notify: overrides.notify } : {}),
   });
 }
 
@@ -349,10 +417,506 @@ async function runShot(): Promise<void> {
   await shot.run();
 }
 
+// ---- Hold the middle button to capture ------------------------------------
+
+interface HoldHelperLaunch {
+  command: string;
+  args: string[];
+  env: NodeJS.ProcessEnv;
+}
+
+function holdHelperLaunch(): HoldHelperLaunch | null {
+  // Only the runtime proof may point KE Pen at a different helper.
+  const override = IS_HOLD_PROOF ? process.env.KE_PEN_HOLD_HELPER_OVERRIDE : undefined;
+  if (override) {
+    return {
+      command: process.execPath,
+      args: [override],
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+    };
+  }
+  const helper = holdHelperPath({
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    executablePath: process.execPath,
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath(),
+  });
+  if (!helper) return null;
+  // The helper needs no environment of its own; it gets only what the OS
+  // needs to start a process.
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of ["PATH", "SystemRoot", "SYSTEMROOT", "TMPDIR", "TEMP", "TMP"]) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  return { command: helper, args: [], env };
+}
+
+function startHoldCapture(): void {
+  if (!shot || holdHelper || !holdCaptureSupported(process.platform)) return;
+  const launch = holdHelperLaunch();
+  if (!launch) return;
+  holdHelper = new HoldHelperSupervisor({
+    ...launch,
+    expectedVersion: app.getVersion(),
+    onHold: () => {
+      if (holdProof) holdProof.holdsReceived += 1;
+      holdProofTrace("hold-received");
+      void runHoldShot();
+    },
+    onStatus: (status) => {
+      const previous = holdStatus?.state;
+      holdStatus = status;
+      void writeHoldStatus(status);
+      refreshHoldArm();
+      if (previous !== status.state) updateTrayMenu();
+      if (status.state === "needs-permission") void maybeExplainHoldPermission();
+      if (status.state === "active") stopAccessibilityWatch();
+    },
+  });
+  holdHelper.configure(shot.settings.current.middleHoldDelayMs);
+  if (shot.settings.current.middleHoldCapture) holdHelper.start();
+}
+
+// Middle clicks are only held back while KE Pen could really open the frozen
+// selector; any overlay, macOS region capture, upload or hold in progress lets
+// them straight through.
+function refreshHoldArm(): void {
+  if (!holdHelper) return;
+  holdHelper.setArmed(
+    shouldArmHold({
+      enabled: shot?.settings.current.middleHoldCapture ?? false,
+      helperActive: holdStatus?.state === "active",
+      phase,
+      activating,
+      shotBusy: shot?.busy() ?? false,
+      holdInFlight,
+    }),
+  );
+}
+
+async function runHoldShot(): Promise<void> {
+  const runtime = shot;
+  // A hold that lands while something else owns the screen is dropped; the
+  // helper was already disarmed for most of that window.
+  if (!runtime || phase !== "idle" || activating || runtime.busy() || holdInFlight) return;
+  holdInFlight = true;
+  refreshHoldArm();
+  try {
+    await runHoldFlow<CapturedDisplay>({
+      // Already-granted access answers without any UI.
+      ensureAccess: () => (IS_HOLD_PROOF ? Promise.resolve(true) : ensureScreenAccess()),
+      // The freeze is the first real work: no window is shown, no tray menu is
+      // rebuilt and no focus moves until every display has been captured.
+      freeze: async () => {
+        dismissShotLinkToast();
+        return IS_HOLD_PROOF ? captureDisplaysForProof() : captureDisplays();
+      },
+      select: (frozen) => captureShotRegionWithOverlay({ frozen, showFrozen: true }),
+      deliver: (capture) => runtime.run(capture),
+      trace: holdProofTrace,
+    });
+  } catch (error) {
+    (holdProof ? proofNotice : presentShotNotice)(
+      "KE Shot failed",
+      error instanceof Error ? error.message : "KE Shot could not freeze the screen.",
+    );
+  } finally {
+    holdInFlight = false;
+    if (holdProof) holdProof.runsCompleted += 1;
+    refreshHoldArm();
+  }
+}
+
+async function writeHoldStatus(status: HoldHelperStatus): Promise<void> {
+  const settings = shot?.settings.current;
+  const document = {
+    schema: "dev.kestudios.pen.hold-status.v1",
+    state: status.state,
+    enabled: settings?.middleHoldCapture ?? false,
+    delayMs: settings?.middleHoldDelayMs ?? null,
+    helperVersion: status.helperVersion,
+    restarts: status.restarts,
+    lastError: status.lastError,
+    updatedAt: new Date().toISOString(),
+  };
+  await writePrivateFile(
+    path.join(app.getPath("userData"), HOLD_STATUS_FILE),
+    `${JSON.stringify(document, null, 2)}\n`,
+  ).catch(() => undefined);
+}
+
+async function maybeExplainHoldPermission(): Promise<void> {
+  if (process.platform !== "darwin" || IS_HOLD_PROOF || !shot) return;
+  if (shot.settings.current.middleHoldPermissionExplained) return;
+  await explainHoldPermission();
+}
+
+// One plain explanation, then the exact System Settings pane. The helper
+// notices the approval on its own; nothing needs a relaunch.
+async function explainHoldPermission(): Promise<void> {
+  if (holdPermissionDialogOpen || !shot) return;
+  holdPermissionDialogOpen = true;
+  try {
+    await shot.settings.update({ middleHoldPermissionExplained: true }).catch(() => undefined);
+    const { response } = await dialog.showMessageBox({
+      type: "info",
+      title: "KE Pen",
+      message: "Hold the middle mouse button to capture",
+      detail:
+        "Hold the middle mouse button for half a second and KE Pen freezes the screen — open " +
+        "menus included — so you can drag a region to capture. A quick middle click still " +
+        "works exactly as before.\n\n" +
+        "To hold that one button back from the app under the pointer, macOS asks you to allow " +
+        "KE Pen in System Settings › Privacy & Security › Accessibility. KE Pen only ever " +
+        "watches the middle mouse button: never the keyboard, never other buttons, and it " +
+        "never records where you click.\n\n" +
+        "If KE Pen already shows as allowed there, that switch belongs to an older build — " +
+        "turn it off and back on.",
+      buttons: ["Open System Settings", "Not now", "Turn off hold-to-capture"],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (response === 0) {
+      // Asking once with the prompt flag is what lists KE Pen in that pane.
+      systemPreferences.isTrustedAccessibilityClient(true);
+      await shell.openExternal(
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+      );
+      watchForAccessibilityGrant();
+    } else if (response === 2) {
+      applyShotSetting({ middleHoldCapture: false });
+    }
+  } finally {
+    holdPermissionDialogOpen = false;
+    updateTrayMenu();
+  }
+}
+
+// The helper polls for the approval itself. This is the backstop: once macOS
+// reports KE Pen trusted, a helper still waiting is restarted. Gives up
+// quietly after five minutes.
+function watchForAccessibilityGrant(): void {
+  stopAccessibilityWatch();
+  let ticks = 0;
+  accessibilityWatchTimer = setInterval(() => {
+    ticks += 1;
+    if (systemPreferences.isTrustedAccessibilityClient(false)) {
+      stopAccessibilityWatch();
+      setTimeout(() => {
+        if (holdStatus?.state === "needs-permission") holdHelper?.restart();
+      }, 2_500);
+    } else if (ticks > 150) {
+      stopAccessibilityWatch();
+    }
+  }, 2_000);
+}
+
+function stopAccessibilityWatch(): void {
+  if (accessibilityWatchTimer) clearInterval(accessibilityWatchTimer);
+  accessibilityWatchTimer = null;
+}
+
+// ---- Hold runtime proof (--hold-proof=<dir>) ----------------------------------
+
+function holdProofTrace(event: string): void {
+  if (!holdProof) return;
+  const atMs = Math.round((performance.now() - holdProof.startedAt) * 10) / 10;
+  holdProof.trace.push({ event, atMs });
+  if (process.env.KE_PEN_HOLD_PROOF_DEBUG === "1") process.stderr.write(`hold-proof ${atMs} ${event}\n`);
+}
+
+// A hidden window's renderer can be slow to answer; no single probe may hang
+// the proof past its own deadline.
+function evaluateIn<T>(window: BrowserWindow, source: string, fallback: T, timeoutMs = 2_000): Promise<T> {
+  return Promise.race([
+    window.webContents.executeJavaScript(source, true) as Promise<T>,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), timeoutMs)),
+  ]).catch(() => fallback);
+}
+
+function proofNotice(title: string, body: string): void {
+  holdProof?.notices.push(`${title}: ${body.split("\n")[0]}`);
+}
+
+// Real frames when this process may capture the screen; otherwise synthetic
+// frames of each display's exact pixel size, so CI runners without screen
+// capture still prove the ordering, geometry and crop.
+async function captureDisplaysForProof(): Promise<CapturedDisplay[]> {
+  const displays = screen.getAllDisplays();
+  const real = await captureDisplays().catch(() => [] as CapturedDisplay[]);
+  if (real.length === displays.length && process.env.KE_PEN_HOLD_PROOF_SYNTHETIC !== "1") {
+    if (holdProof) holdProof.captureSource = "desktopCapturer";
+    return real;
+  }
+  if (holdProof) holdProof.captureSource = "synthetic";
+  return displays.map((display) => {
+    const width = Math.max(1, Math.round(display.size.width * display.scaleFactor));
+    const height = Math.max(1, Math.round(display.size.height * display.scaleFactor));
+    const pixels = Buffer.alloc(width * height * 4);
+    for (let offset = 0; offset < pixels.length; offset += 4) {
+      pixels[offset] = 0x2a; // blue
+      pixels[offset + 1] = 0x3a; // green
+      pixels[offset + 2] = 0xff; // red
+      pixels[offset + 3] = 0xff;
+    }
+    return { display, image: nativeImage.createFromBuffer(pixels, { width, height }) };
+  });
+}
+
+async function runHoldProof(): Promise<void> {
+  const directory = path.resolve(HOLD_PROOF!);
+  const picturesRoot = path.join(directory, "pictures");
+  const startedAt = performance.now();
+  holdProof = {
+    show: process.env.KE_PEN_HOLD_PROOF_SHOW === "1",
+    trace: [],
+    startedAt,
+    clipboardImages: [],
+    notices: [],
+    captureSource: "desktopCapturer",
+    overlayLevel: null,
+    holdsReceived: 0,
+    runsCompleted: 0,
+  };
+  const proof = holdProof;
+  const failures: string[] = [];
+  const expect = (condition: boolean, message: string): void => {
+    if (!condition) failures.push(message);
+  };
+  const clipboardShim: ShotClipboard = {
+    writeImage: (image) => {
+      proof.clipboardImages.push(image.getSize());
+    },
+    readImage: () => nativeImage.createEmpty(),
+    writeText: () => undefined,
+    write: () => undefined,
+  };
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await createShot({ picturesDirectory: picturesRoot, clipboard: clipboardShim, notify: proofNotice });
+  if (!shot) throw new Error("Hold proof could not create the KE Shot runtime.");
+  const runtime = shot;
+  const displays = screen.getAllDisplays();
+  const result: Record<string, unknown> = {
+    schema: "dev.kestudios.pen.middle-hold.runtime-proof.v1",
+    createdAt: new Date().toISOString(),
+    platform: process.platform,
+    displays: displays.length,
+    overlaysShownOnScreen: proof.show,
+    clipboard: "in-memory shim",
+    network: "none (no endpoint configured)",
+  };
+
+  startHoldCapture();
+  const helper = holdHelper as HoldHelperSupervisor | null;
+  if (!helper) throw new Error("Hold proof could not start the hold helper supervisor.");
+
+  // Hold #1: the fake helper sends a hold after KE Pen arms it.
+  await waitFor(() => proof.holdsReceived >= 1, 8_000, "the first hold");
+  const expectedOverlays = displays.length;
+  await waitFor(() => overlays.size === expectedOverlays && pendingShotRegion !== null, 10_000, "the frozen overlays");
+  const contexts = [...overlays.values()];
+  await waitForAsync(async () => {
+    const ready = await Promise.all(
+      contexts.map((context) => evaluateIn(context.window, "document.body.dataset.ready === 'true'", false)),
+    );
+    return ready.every(Boolean);
+  }, 10_000, "the frozen overlay renderers");
+  holdProofTrace("overlays-ready");
+
+  const geometry = contexts.map((context) => {
+    const bounds = context.window.getBounds();
+    const pixels = context.capture.getSize();
+    return {
+      boundsMatchDisplay: JSON.stringify(bounds) === JSON.stringify(context.display.bounds),
+      alwaysOnTop: context.window.isAlwaysOnTop(),
+      scaleFactor: context.display.scaleFactor,
+      capturePixels: pixels,
+      capturedAtNativeResolution:
+        pixels.width >= Math.floor(context.display.size.width * context.display.scaleFactor) &&
+        pixels.height >= Math.floor(context.display.size.height * context.display.scaleFactor),
+    };
+  });
+  const frozenFacts = await Promise.all(
+    contexts.map((context) =>
+      evaluateIn(
+        context.window,
+        `(() => {
+          const canvas = document.getElementById("ink");
+          const pixel = canvas.getContext("2d").getImageData(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1).data;
+          return { frozen: document.body.dataset.frozen === "true", opaqueCentre: pixel[3] === 255,
+                   badge: document.getElementById("badge-detail").textContent };
+        })()`,
+        { frozen: false, opaqueCentre: false, badge: "no answer" },
+      ),
+    ),
+  );
+  expect(geometry.every((entry) => entry.boundsMatchDisplay), "an overlay did not cover its display exactly");
+  expect(geometry.every((entry) => entry.alwaysOnTop), "an overlay was not always on top");
+  expect(proof.overlayLevel === "screen-saver", "the frozen overlay was not raised to the screen-saver level");
+  expect(frozenFacts.every((entry) => entry.frozen && entry.opaqueCentre), "an overlay did not draw the frozen screen");
+  expect(helper.isArmed === false, "the helper stayed armed while the frozen selector was open");
+
+  // Select a region on the display under the cursor, through the same bridge
+  // the renderer uses.
+  const cursorDisplay = displayForPoint(displays, screen.getCursorScreenPoint()) ?? displays[0]!;
+  const target = contexts.find((context) => context.display.id === cursorDisplay.id) ?? contexts[0]!;
+  const rect = { x: 10, y: 20, width: 200, height: 100 };
+  const imageSize = target.capture.getSize();
+  const expected = computeRegionCropPixels({
+    rect,
+    displayWidth: target.display.bounds.width,
+    displayHeight: target.display.bounds.height,
+    imageWidth: imageSize.width,
+    imageHeight: imageSize.height,
+  });
+  holdProofTrace("region-submit");
+  // The overlay is torn down right after it answers, so the reply to this
+  // call can be lost with it; completion is read from the hold run instead.
+  void evaluateIn(
+    target.window,
+    `window.kePen.submitShotRegion({ displayId: ${target.display.id}, rect: ${JSON.stringify(rect)} })`,
+    null,
+    5_000,
+  );
+  await waitFor(() => proof.runsCompleted >= 1, 10_000, "delivery");
+  holdProofTrace("delivered");
+  const firstClipboard = proof.clipboardImages[0];
+  expect(proof.clipboardImages.length === 1, "the selection did not reach the clipboard exactly once");
+  expect(
+    firstClipboard !== undefined &&
+      firstClipboard.width === expected.width &&
+      firstClipboard.height === expected.height,
+    `the clipboard image was ${JSON.stringify(firstClipboard)}, expected ${JSON.stringify(expected)}`,
+  );
+  const localCopies = await readdir(path.join(picturesRoot, "KE Shot")).catch(() => [] as string[]);
+  let localCopyMode = "";
+  if (localCopies[0]) {
+    const info = await stat(path.join(picturesRoot, "KE Shot", localCopies[0]));
+    localCopyMode = (info.mode & 0o777).toString(8);
+  }
+  expect(localCopies.length === 1, "the local safety copy was not written exactly once");
+
+  // Hold #2 arrives once KE Pen re-arms; Escape must cancel with nothing copied.
+  await waitFor(() => proof.holdsReceived >= 2, 8_000, "the second hold");
+  await waitFor(() => overlays.size === expectedOverlays && pendingShotRegion !== null, 10_000, "the second overlays");
+  const second = [...overlays.values()];
+  await waitForAsync(async () => {
+    const ready = await Promise.all(
+      second.map((context) => evaluateIn(context.window, "document.body.dataset.ready === 'true'", false)),
+    );
+    return ready.every(Boolean);
+  }, 10_000, "the second overlay renderers");
+  holdProofTrace("escape");
+  if (proof.show) {
+    second[0]!.window.webContents.sendInputEvent({ type: "keyDown", keyCode: "Escape" });
+  } else {
+    await evaluateIn(
+      second[0]!.window,
+      "window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))",
+      false,
+    );
+  }
+  await waitFor(() => proof.runsCompleted >= 2, 10_000, "the cancel");
+  holdProofTrace("cancelled");
+  expect(proof.clipboardImages.length === 1, "Escape still put something on the clipboard");
+  await waitFor(() => helper.isArmed, 3_000, "re-arming after the cancel").catch(() => {
+    failures.push("the helper was not re-armed after the selector closed");
+  });
+
+  // Ordering: the freeze completes before any overlay exists, is shown or
+  // takes focus, and no tray rebuild happens between the hold and the freeze.
+  const index = (event: string, from = 0): number =>
+    proof.trace.findIndex((entry, position) => position >= from && entry.event === event);
+  const holdIndex = index("hold-received");
+  const captureComplete = index("capture-complete", holdIndex);
+  const firstOverlay = index("overlay-created", holdIndex);
+  const firstShow = index("overlay-show", holdIndex);
+  const firstFocus = index("focus", holdIndex);
+  const trayBeforeFreeze = proof.trace
+    .slice(holdIndex, captureComplete)
+    .some((entry) => entry.event === "tray-update");
+  const painted = index("overlays-painted", holdIndex);
+  const ordering = {
+    captureBeforeOverlayCreated: captureComplete >= 0 && captureComplete < firstOverlay,
+    captureBeforeOverlayShown: captureComplete >= 0 && captureComplete < firstShow,
+    frozenFramePaintedBeforeShown: painted >= 0 && painted < firstShow,
+    showBeforeFocus: firstShow >= 0 && firstShow < firstFocus,
+    noTrayRebuildBeforeFreeze: !trayBeforeFreeze,
+  };
+  expect(Object.values(ordering).every(Boolean), `ordering failed: ${JSON.stringify(ordering)}`);
+  const at = (i: number): number => proof.trace[i]?.atMs ?? Number.NaN;
+
+  await helper.stop();
+  // The crop came from this machine's real screen: keep only its facts.
+  await rm(picturesRoot, { recursive: true, force: true });
+
+  Object.assign(result, {
+    captureSource: proof.captureSource,
+    overlays: geometry.length,
+    geometry,
+    frozenOverlay: frozenFacts.map((entry) => ({ frozen: entry.frozen, opaqueCentre: entry.opaqueCentre })),
+    badge: frozenFacts[0]?.badge ?? null,
+    overlayLevel: proof.overlayLevel,
+    ordering,
+    timingsMs: {
+      holdToCaptureComplete: at(captureComplete) - at(holdIndex),
+      holdToFrozenFramePainted: at(painted) - at(holdIndex),
+      holdToFirstOverlayShown: at(firstShow) - at(holdIndex),
+      holdToOverlaysReady: at(index("overlays-ready")) - at(holdIndex),
+    },
+    clipboardWrites: proof.clipboardImages.length,
+    clipboardImage: firstClipboard ?? null,
+    expectedCrop: expected,
+    localCopies: localCopies.length,
+    localCopyMode,
+    escapeMethod: proof.show ? "sendInputEvent" : "dom-keydown",
+    holdsReceived: proof.holdsReceived,
+    notices: proof.notices,
+    trace: proof.trace,
+    failures,
+    passed: failures.length === 0,
+  });
+  const receipt = path.join(directory, "hold-proof.json");
+  await writeFile(receipt, `${JSON.stringify(result, null, 2)}\n`, { mode: 0o600 });
+  if (failures.length > 0) {
+    process.stderr.write(`PEN_HOLD_PROOF_FAILED ${failures.join("; ")}\n`);
+    app.exit(1);
+    return;
+  }
+  process.stdout.write(`PEN_HOLD_PROOF_OK ${JSON.stringify({ receipt })}\n`);
+  app.exit(0);
+}
+
+async function waitFor(condition: () => boolean, timeoutMs: number, what: string): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error(`Hold proof timed out waiting for ${what}.`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+async function waitForAsync(condition: () => Promise<boolean>, timeoutMs: number, what: string): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!(await condition())) {
+    if (Date.now() > deadline) throw new Error(`Hold proof timed out waiting for ${what}.`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 async function updateShotSettings(patch: Partial<ShotSettings>): Promise<void> {
   if (!shot) return;
   const next = await shot.settings.update(patch);
   if (patch.showInDock !== undefined) applyDockVisibility(next.showInDock);
+  if (patch.middleHoldDelayMs !== undefined) holdHelper?.configure(next.middleHoldDelayMs);
+  if (patch.middleHoldCapture !== undefined) {
+    if (next.middleHoldCapture) holdHelper?.start();
+    else {
+      stopAccessibilityWatch();
+      await holdHelper?.stop();
+    }
+  }
+  refreshHoldArm();
   updateTrayMenu();
 }
 
@@ -407,15 +971,23 @@ function registerIpc(): void {
   ipcMain.handle("pen:bootstrap", (event) => {
     const context = contextFor(event);
     const isShot = overlayMode === "shot";
+    const baseline = overlayBaseline(overlayMode, overlayFrozen);
+    holdProofTrace("overlay-bootstrap");
     return {
       mode: overlayMode,
       displayId: context.display.id,
       screenWidth: context.display.bounds.width,
       screenHeight: context.display.bounds.height,
-      // KE Shot crops in the main process, so the overlay never pays for a
-      // full-screen data URL it would only throw away.
-      baselineDataUrl: isShot ? "" : context.capture.toDataURL(),
-      shortcut: isShot ? shotShortcutLabel : SHORTCUT_LABEL,
+      // KE Shot crops in the main process, so the hotkey overlay never pays for
+      // a full-screen data URL it would only throw away.
+      baselineDataUrl:
+        baseline === "frozen-jpeg"
+          ? `data:image/jpeg;base64,${context.capture.toJPEG(90).toString("base64")}`
+          : baseline === "png"
+            ? context.capture.toDataURL()
+            : "",
+      frozen: baseline === "frozen-jpeg",
+      shortcut: baseline === "frozen-jpeg" ? "" : isShot ? shotShortcutLabel : SHORTCUT_LABEL,
     };
   });
 
@@ -515,6 +1087,13 @@ function registerIpc(): void {
     return { id };
   });
 
+  ipcMain.on("pen:overlay-ready", (event) => {
+    const context = overlays.get(event.sender.id);
+    if (!context || context.window.isDestroyed()) return;
+    paintedOverlays.add(event.sender.id);
+    overlayPaintWaiter?.();
+  });
+
   ipcMain.on("pen:cancel", (event) => {
     contextFor(event);
     void cancelPen("Cancelled by the user with Escape.");
@@ -575,13 +1154,22 @@ async function activatePen(): Promise<void> {
   }
 }
 
-// Windows and Linux have no system region picker, so KE Shot reuses the Pen
-// overlay windows in a rubber-band mode. macOS never reaches this path.
-async function captureShotRegionWithOverlay(): Promise<Buffer | null> {
+interface ShotOverlayOptions {
+  // Captures taken before anything was shown: hold to capture freezes first.
+  frozen?: CapturedDisplay[];
+  // Draw the frozen image under the selector instead of the live screen.
+  showFrozen?: boolean;
+}
+
+// Windows and Linux have no system region picker, so the KE Shot hotkey reuses
+// the Pen overlay windows in a rubber-band mode. Hold to capture uses the same
+// windows on every platform, over the frozen screen it captured first.
+async function captureShotRegionWithOverlay(options: ShotOverlayOptions = {}): Promise<Buffer | null> {
   if (phase !== "idle" || activating) return null;
   activating = true;
+  const frozen = options.showFrozen === true && options.frozen !== undefined;
   try {
-    const captures = await captureDisplays();
+    const captures = options.frozen ?? (await captureDisplays());
     if (captures.length === 0) {
       throw new Error(
         "KE Shot could not capture a display. Grant screen-capture permission and try again.",
@@ -589,21 +1177,27 @@ async function captureShotRegionWithOverlay(): Promise<Buffer | null> {
     }
 
     overlayMode = "shot";
+    overlayFrozen = frozen;
     activeDisplayId = null;
     currentAnnotationId = null;
     setPhase("drawing");
+    paintedOverlays.clear();
     for (const capture of captures) {
-      await createOverlay(capture.display, capture.image);
+      await createOverlay(capture.display, capture.image, { frozen });
     }
+    // Nothing is shown and no focus moves until every frozen frame is drawn,
+    // so an open menu stays open until the frozen copy covers it.
+    if (frozen) await waitForOverlaysPainted(1_500);
     for (const context of overlays.values()) {
-      context.window.showInactive();
+      showOverlayInactive(context.window);
     }
     const cursorDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
     const focusWindow = [...overlays.values()].find(
       (context) => context.display.id === cursorDisplay.id,
     )?.window;
-    focusWindow?.show();
-    focusWindow?.focus();
+    // A frozen selector is opened from another app's menu, so KE Pen has to
+    // take keyboard focus for Escape to reach it.
+    focusOverlay(focusWindow, frozen && process.platform === "darwin");
     return await new Promise<Buffer | null>((resolve) => {
       pendingShotRegion = resolve;
     });
@@ -612,6 +1206,7 @@ async function captureShotRegionWithOverlay(): Promise<Buffer | null> {
     throw error;
   } finally {
     activating = false;
+    refreshHoldArm();
   }
 }
 
@@ -619,11 +1214,58 @@ function finishShotOverlay(region: Buffer | null): void {
   const resolve = pendingShotRegion;
   pendingShotRegion = null;
   if (overlayMode !== "shot" && !resolve) return;
+  const wasFrozen = overlayFrozen;
   closeOverlays();
   activeDisplayId = null;
   overlayMode = "pen";
+  overlayFrozen = false;
   setPhase("idle");
+  if (wasFrozen) handFocusBack();
   resolve?.(region);
+}
+
+// The frozen selector took focus from whatever app the person was in. Once it
+// closes, give that app its focus back unless KE Pen has a window of its own up.
+function handFocusBack(): void {
+  if (process.platform !== "darwin" || IS_HOLD_PROOF) return;
+  if (BrowserWindow.getAllWindows().some((window) => !window.isDestroyed() && window.isVisible())) {
+    return;
+  }
+  app.hide();
+}
+
+function waitForOverlaysPainted(timeoutMs: number): Promise<void> {
+  const allPainted = (): boolean => [...overlays.keys()].every((id) => paintedOverlays.has(id));
+  if (allPainted()) {
+    holdProofTrace("overlays-painted");
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const finish = (painted: boolean): void => {
+      clearTimeout(timer);
+      overlayPaintWaiter = null;
+      holdProofTrace(painted ? "overlays-painted" : "overlays-paint-timeout");
+      resolve();
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    overlayPaintWaiter = () => {
+      if (allPainted()) finish(true);
+    };
+  });
+}
+
+function showOverlayInactive(window: BrowserWindow): void {
+  holdProofTrace("overlay-show");
+  if (holdProof && !holdProof.show) return;
+  window.showInactive();
+}
+
+function focusOverlay(window: BrowserWindow | undefined, stealAppFocus: boolean): void {
+  holdProofTrace("focus");
+  if (holdProof && !holdProof.show) return;
+  if (stealAppFocus) app.focus({ steal: true });
+  window?.show();
+  window?.focus();
 }
 
 async function ensureScreenAccess(): Promise<boolean> {
@@ -684,37 +1326,44 @@ function stopPermissionWatch(): void {
   permissionWatchTimer = null;
 }
 
-async function captureDisplays(): Promise<Array<{ display: Display; image: NativeImage }>> {
-  const displays = screen.getAllDisplays();
-  const width = Math.max(
-    ...displays.map((display) => Math.ceil(display.size.width * display.scaleFactor)),
-  );
-  const height = Math.max(
-    ...displays.map((display) => Math.ceil(display.size.height * display.scaleFactor)),
-  );
-  const sources = await desktopCapturer.getSources({
-    types: ["screen"],
-    thumbnailSize: { width, height },
-    fetchWindowIcons: false,
-  });
-  const primary = screen.getPrimaryDisplay();
-
-  return displays.flatMap((display, index) => {
-    const exact = sources.find((source) => source.display_id === String(display.id));
-    const indexed = sources.length === displays.length ? sources[index] : undefined;
-    const single = display.id === primary.id && sources.length === 1 ? sources[0] : undefined;
-    const source = exact ?? indexed ?? single;
-    if (!source || source.thumbnail.isEmpty()) return [];
-    return [{ display, image: source.thumbnail }];
-  });
+interface CapturedDisplay {
+  display: Display;
+  image: NativeImage;
 }
 
-async function createOverlay(display: Display, capture: NativeImage): Promise<void> {
+async function captureDisplays(): Promise<CapturedDisplay[]> {
+  const displays = screen.getAllDisplays();
+  const sources = await desktopCapturer.getSources({
+    types: ["screen"],
+    thumbnailSize: captureThumbnailSize(displays),
+    fetchWindowIcons: false,
+  });
+  return matchCapturesToDisplays(
+    displays,
+    sources,
+    screen.getPrimaryDisplay().id,
+    (image) => image.isEmpty(),
+  );
+}
+
+interface OverlayOptions {
+  frozen?: boolean;
+}
+
+async function createOverlay(
+  display: Display,
+  capture: NativeImage,
+  options: OverlayOptions = {},
+): Promise<void> {
+  const frozen = options.frozen === true;
   const window = new BrowserWindow({
     x: display.bounds.x,
     y: display.bounds.y,
     width: display.bounds.width,
     height: display.bounds.height,
+    // The frozen screen must cover the menu bar and the Dock pixel for pixel,
+    // which macOS only allows a window that may be larger than the work area.
+    enableLargerThanScreen: frozen,
     transparent: true,
     backgroundColor: "#00000000",
     frame: false,
@@ -736,7 +1385,15 @@ async function createOverlay(display: Display, capture: NativeImage): Promise<vo
     },
   });
   window.setMenuBarVisibility(false);
-  window.setAlwaysOnTop(true);
+  if (frozen) {
+    // Above the menu bar, the Dock and any open menu, so the live screen can
+    // never draw over the frozen one and misregister the selection.
+    window.setAlwaysOnTop(true, "screen-saver");
+    window.setBounds(display.bounds);
+    if (holdProof) holdProof.overlayLevel = "screen-saver";
+  } else {
+    window.setAlwaysOnTop(true);
+  }
   if (process.platform !== "win32") {
     window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   }
@@ -745,6 +1402,7 @@ async function createOverlay(display: Display, capture: NativeImage): Promise<vo
   const webContentsId = window.webContents.id;
   overlays.set(webContentsId, { capture, display, window });
   window.on("closed", () => overlays.delete(webContentsId));
+  holdProofTrace("overlay-created");
   await window.loadFile(path.join(__dirname, "ui", "index.html"));
 }
 
@@ -839,7 +1497,10 @@ function setPhase(nextPhase: PenPhase): void {
   }
   // The status poll calls this five times a second with the same phase, and
   // rebuilding the tray menu that often can dismiss it while it is open.
-  if (changed) updateTrayMenu();
+  if (changed) {
+    updateTrayMenu();
+    refreshHoldArm();
+  }
 }
 
 function createTray(): void {
@@ -860,6 +1521,7 @@ function createTray(): void {
 }
 
 function updateTrayMenu(): void {
+  holdProofTrace("tray-update");
   if (!tray) return;
   tray.setContextMenu(Menu.buildFromTemplate([...shotMenuSection(), ...penMenuSection()]));
 }
@@ -965,10 +1627,61 @@ function shotMenuSection(): MenuItemConstructorOptions[] {
       click: () => applyShotSetting({ saveLocalCopy: !settings.saveLocalCopy }),
     },
     ...dockItem,
+    ...holdMenuItems(settings),
     { label: "Open settings file…", click: () => void shell.openPath(runtime.settings.file) },
     { type: "separator" },
   ];
 }
+
+// "Hold middle button to capture" lives beside the other KE Shot settings.
+function holdMenuItems(settings: ShotSettings): MenuItemConstructorOptions[] {
+  if (!holdCaptureSupported(process.platform)) return [];
+  const delays: MenuItemConstructorOptions[] = holdDelayChoices(settings.middleHoldDelayMs).map(
+    (ms) => ({
+      label: HOLD_DELAY_LABELS[ms] ?? `${ms} ms (custom)`,
+      type: "radio",
+      checked: settings.middleHoldDelayMs === ms,
+      click: () => applyShotSetting({ middleHoldDelayMs: ms }),
+    }),
+  );
+  const items: MenuItemConstructorOptions[] = [
+    {
+      label: "Hold middle button to capture",
+      type: "checkbox",
+      checked: settings.middleHoldCapture,
+      toolTip:
+        "Hold the middle mouse button to freeze the screen — open menus included — and drag " +
+        "a region. A quick middle click still works as usual.",
+      click: () => applyShotSetting({ middleHoldCapture: !settings.middleHoldCapture }),
+    },
+    { label: "Hold delay", enabled: settings.middleHoldCapture, submenu: delays },
+  ];
+  if (!settings.middleHoldCapture) return items;
+  const state = holdStatus?.state;
+  if (state === "needs-permission") {
+    items.push({
+      label: "Hold-to-capture needs Accessibility…",
+      click: () => void explainHoldPermission(),
+    });
+  } else if (state === "failed") {
+    items.push({
+      label: "Hold-to-capture stopped — Restart",
+      click: () => holdHelper?.restart(),
+    });
+  } else if (state === "unavailable") {
+    items.push({ label: "Hold-to-capture is unavailable in this build", enabled: false });
+  }
+  return items;
+}
+
+const HOLD_DELAY_LABELS: Record<number, string> = {
+  200: "200 ms — fastest",
+  350: "350 ms",
+  500: "500 ms — default",
+  750: "750 ms",
+  1000: "1 second",
+  1500: "1.5 seconds",
+};
 
 function confirmDeleteShot(entry: ShotHistoryEntry): void {
   void (async () => {

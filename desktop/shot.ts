@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { clipboard, nativeImage, type NativeImage } from "electron";
 import type { SettingsStore, ShotHistoryStore, ShotSettings } from "./settings.js";
-import { presentShotNotice } from "./shot-toast.js";
+import { presentShotNotice as presentDefaultShotNotice } from "./shot-toast.js";
 import {
   buildUploadHeaders,
   describeUploadFailure,
@@ -19,18 +19,27 @@ import {
   type ShotResponse,
 } from "./shot-core.js";
 
+// The slice of Electron's clipboard KE Shot uses. Injectable so the hold
+// runtime proof never touches the person's real clipboard.
+export type ShotClipboard = Pick<typeof clipboard, "writeImage" | "readImage" | "writeText" | "write">;
+export type ShotNotice = typeof presentDefaultShotNotice;
+
 export interface ShotRuntimeOptions {
   settings: SettingsStore;
   history: ShotHistoryStore;
   captureRegion(): Promise<Buffer | null>;
   onChange(): void;
+  clipboard?: ShotClipboard;
+  notify?: ShotNotice;
 }
 
 export interface ShotRuntime {
   readonly settings: SettingsStore;
   readonly history: ShotHistoryStore;
   busy(): boolean;
-  run(): Promise<void>;
+  // `capture` replaces the default region capture for this one run (hold to
+  // capture passes the frozen-screen selector); delivery is unchanged.
+  run(capture?: () => Promise<Buffer | null>): Promise<void>;
   retryPending(): Promise<void>;
   deleteShot(key: string): Promise<void>;
   pendingCount(): number;
@@ -73,6 +82,8 @@ const MIN_DOWNSCALE_WIDTH = 640;
 export function createShotRuntime(options: ShotRuntimeOptions): ShotRuntime {
   let running = false;
   let unconfiguredNoticeShown = false;
+  const board: ShotClipboard = options.clipboard ?? clipboard;
+  const presentShotNotice: ShotNotice = options.notify ?? presentDefaultShotNotice;
 
   return {
     settings: options.settings,
@@ -80,17 +91,17 @@ export function createShotRuntime(options: ShotRuntimeOptions): ShotRuntime {
     busy: () => running,
     pendingCount: () => options.history.entries.filter(isRetryable).length,
 
-    async run(): Promise<void> {
+    async run(capture?: () => Promise<Buffer | null>): Promise<void> {
       if (running) return;
       running = true;
       options.onChange();
       try {
-        const png = await options.captureRegion();
+        const png = await (capture ?? options.captureRegion)();
         if (!png) return;
         // The clipboard write is the whole product promise: it happens before
         // any disk or network work so a paste right after release always lands.
         const image = readCapture(png);
-        clipboard.writeImage(image);
+        board.writeImage(image);
         await deliver(png, image);
       } catch (error) {
         presentShotNotice("KE Shot failed", messageFor(error));
@@ -221,7 +232,7 @@ export function createShotRuntime(options: ShotRuntimeOptions): ShotRuntime {
       await options.history.add(
         uploadedEntry(key, result.response, localPath, png.byteLength, null),
       );
-      applyCopyMode(settings.copyMode, image, result.response.url);
+      applyCopyMode(board, settings.copyMode, image, result.response.url);
       presentShotNotice(
         "KE Shot link ready",
         `${result.response.url}${degradedNote(result.degraded)}`,
@@ -482,18 +493,18 @@ function isRedirectRefusal(error: unknown): boolean {
   return false;
 }
 
-function applyCopyMode(mode: CopyMode, image: NativeImage, url: string): void {
+function applyCopyMode(board: ShotClipboard, mode: CopyMode, image: NativeImage, url: string): void {
   if (mode === "image") return;
   // Seconds of upload have passed since the capture went on the clipboard. If
   // anything else was copied in the meantime, that copy belongs to the person;
   // the notification still carries the link.
-  if (!clipboardStillHoldsShot(image)) return;
-  if (mode === "link") clipboard.writeText(url);
-  else clipboard.write({ text: url, image });
+  if (!clipboardStillHoldsShot(board, image)) return;
+  if (mode === "link") board.writeText(url);
+  else board.write({ text: url, image });
 }
 
-function clipboardStillHoldsShot(image: NativeImage): boolean {
-  const current = clipboard.readImage();
+function clipboardStillHoldsShot(board: ShotClipboard, image: NativeImage): boolean {
+  const current = board.readImage();
   if (current.isEmpty()) return false;
   const held = current.getSize();
   const expected = image.getSize();

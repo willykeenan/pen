@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld(
     submitAnnotation: (payload: unknown) => ipcRenderer.invoke("pen:submit-annotation", payload),
     submitShotRegion: (payload: unknown) => ipcRenderer.invoke("pen:submit-shot-region", payload),
     cancel: () => ipcRenderer.send("pen:cancel"),
+    overlayReady: () => ipcRenderer.send("pen:overlay-ready"),
     onPhase: (callback: (phase: string) => void) => {
       ipcRenderer.on("pen:phase", (_event, phase: string) => callback(phase));
     },

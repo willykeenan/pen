@@ -121,6 +121,12 @@ function presentMacLinkToast(
     });
 }
 
+// Hold to capture freezes the whole screen; a link popup from the previous
+// shot has no business in the new capture, and closing it moves no focus.
+export function dismissShotLinkToast(): void {
+  closeActiveLinkToast();
+}
+
 function closeActiveLinkToast(): void {
   clearActiveLinkToastTimer();
   const toast = activeLinkToast;

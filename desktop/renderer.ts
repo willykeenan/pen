@@ -6,6 +6,9 @@ interface Bootstrap {
   screenWidth: number;
   screenHeight: number;
   baselineDataUrl: string;
+  // Hold to capture: the overlay shows the screen as it was when the hold
+  // fired, so menus that have since closed are still there to select.
+  frozen?: boolean;
   shortcut: string;
 }
 
@@ -16,6 +19,7 @@ interface PenBridge {
   submitAnnotation(payload: unknown): Promise<{ id: string }>;
   submitShotRegion(payload: unknown): Promise<{ ok: boolean }>;
   cancel(): void;
+  overlayReady(): void;
   onPhase(callback: (phase: string) => void): void;
 }
 
@@ -41,6 +45,7 @@ let startedAt = performance.now();
 let regionOrigin: { x: number; y: number } | null = null;
 let regionPoint: { x: number; y: number } | null = null;
 let regionSubmitted = false;
+let frozenImage: HTMLImageElement | null = null;
 
 window.kePen.onPhase((nextPhase) => {
   phase = nextPhase;
@@ -55,7 +60,15 @@ void initialize();
 async function initialize(): Promise<void> {
   bootstrap = await window.kePen.bootstrap();
   if (bootstrap.mode === "shot") {
+    if (bootstrap.frozen && bootstrap.baselineDataUrl.length > 0) {
+      frozenImage = await loadImage(bootstrap.baselineDataUrl);
+      document.body.dataset.frozen = "true";
+    }
     initializeShot();
+    document.body.dataset.ready = "true";
+    // The frozen frame is drawn: KE Pen may show this window and take focus
+    // without the live screen (and a closing menu) ever showing through.
+    window.kePen.overlayReady();
     return;
   }
   baseline = await loadImage(bootstrap.baselineDataUrl);
@@ -70,7 +83,7 @@ async function initialize(): Promise<void> {
 }
 
 function initializeShot(): void {
-  badgeTitle.textContent = "SHOT · K&E STUDIOS";
+  badgeTitle.textContent = frozenImage ? "SHOT · FROZEN" : "SHOT · K&E STUDIOS";
   resizeCanvas();
   renderBadge();
   window.addEventListener("resize", resizeCanvas);
@@ -83,6 +96,9 @@ function initializeShot(): void {
 
 function handleRegionPointerDown(event: PointerEvent): void {
   if (regionSubmitted || regionOrigin) return;
+  // The selection is a primary-button drag; a middle button still settling
+  // from the hold that opened this overlay must not start one.
+  if (event.button !== 0) return;
   if (!window.kePen.beginStroke()) return;
   activePointerId = event.pointerId;
   regionOrigin = { x: event.clientX, y: event.clientY };
@@ -312,11 +328,35 @@ function drawRegion(): void {
   const ratio = window.devicePixelRatio || 1;
   context.setTransform(ratio, 0, 0, ratio, 0, 0);
   context.clearRect(0, 0, window.innerWidth, window.innerHeight);
+  const width = bootstrap?.screenWidth ?? window.innerWidth;
+  const height = bootstrap?.screenHeight ?? window.innerHeight;
+  if (frozenImage) {
+    // The frozen screen fills the display exactly; the live screen underneath
+    // never shows through.
+    context.imageSmoothingQuality = "high";
+    context.drawImage(frozenImage, 0, 0, width, height);
+  }
   context.fillStyle = "rgba(9, 9, 12, 0.38)";
   context.fillRect(0, 0, window.innerWidth, window.innerHeight);
   const rect = currentRegion();
   if (!rect || rect.width < 1 || rect.height < 1) return;
-  context.clearRect(rect.x, rect.y, rect.width, rect.height);
+  if (frozenImage) {
+    const scaleX = frozenImage.naturalWidth / width;
+    const scaleY = frozenImage.naturalHeight / height;
+    context.drawImage(
+      frozenImage,
+      rect.x * scaleX,
+      rect.y * scaleY,
+      rect.width * scaleX,
+      rect.height * scaleY,
+      rect.x,
+      rect.y,
+      rect.width,
+      rect.height,
+    );
+  } else {
+    context.clearRect(rect.x, rect.y, rect.width, rect.height);
+  }
   context.strokeStyle = "rgba(255, 58, 42, 0.98)";
   context.lineWidth = 1;
   context.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.width - 1, rect.height - 1);
@@ -328,7 +368,9 @@ function renderBadge(): void {
     badgeDetail.textContent =
       rect && rect.width >= 1 && rect.height >= 1
         ? `${Math.round(rect.width)} × ${Math.round(rect.height)} · release to capture`
-        : `DRAG A REGION · Esc to cancel${bootstrap.shortcut ? ` · ${bootstrap.shortcut}` : ""}`;
+        : frozenImage
+          ? "FROZEN · drag a region · Esc to cancel"
+          : `DRAG A REGION · Esc to cancel${bootstrap.shortcut ? ` · ${bootstrap.shortcut}` : ""}`;
     document.body.dataset.phase = phase;
     return;
   }

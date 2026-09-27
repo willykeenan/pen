@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { clampHoldDelay, HOLD_DEFAULT_DELAY_MS, holdCaptureSupported } from "./hold-core.js";
 import {
   addShotToHistory,
   isCopyMode,
@@ -19,6 +20,10 @@ export interface ShotSettings {
   localCopyDir: string;
   shotShortcut: string;
   showInDock: boolean;
+  // Hold the middle mouse button to freeze the screen and open the selector.
+  middleHoldCapture: boolean;
+  middleHoldDelayMs: number;
+  middleHoldPermissionExplained: boolean;
 }
 
 export interface LocalStateOptions {
@@ -67,10 +72,17 @@ export function defaultSettings(
     localCopyDir: path.join(picturesDirectory, "KE Shot"),
     shotShortcut: defaultShotShortcut(platform),
     showInDock: platform === "darwin",
+    middleHoldCapture: holdCaptureSupported(platform),
+    middleHoldDelayMs: HOLD_DEFAULT_DELAY_MS,
+    middleHoldPermissionExplained: false,
   };
 }
 
-export function normalizeSettings(input: unknown, defaults: ShotSettings): ShotSettings {
+export function normalizeSettings(
+  input: unknown,
+  defaults: ShotSettings,
+  platform: NodeJS.Platform = process.platform,
+): ShotSettings {
   const raw =
     input && typeof input === "object" && !Array.isArray(input)
       ? (input as Record<string, unknown>)
@@ -84,14 +96,27 @@ export function normalizeSettings(input: unknown, defaults: ShotSettings): ShotS
     localCopyDir: normalizeDirectory(raw.localCopyDir, defaults.localCopyDir),
     shotShortcut: normalizeShortcut(raw.shotShortcut, defaults.shotShortcut),
     showInDock: typeof raw.showInDock === "boolean" ? raw.showInDock : defaults.showInDock,
+    // Never on where the platform cannot support it, whatever the file says.
+    middleHoldCapture:
+      holdCaptureSupported(platform) &&
+      (typeof raw.middleHoldCapture === "boolean" ? raw.middleHoldCapture : defaults.middleHoldCapture),
+    middleHoldDelayMs: clampHoldDelay(raw.middleHoldDelayMs, defaults.middleHoldDelayMs),
+    middleHoldPermissionExplained:
+      typeof raw.middleHoldPermissionExplained === "boolean"
+        ? raw.middleHoldPermissionExplained
+        : defaults.middleHoldPermissionExplained,
   };
 }
 
 // A hand-edited settings file is the only way to configure uploading, so a
 // broken file must degrade to safe defaults instead of taking the app down.
-export function parseSettingsDocument(text: string, defaults: ShotSettings): ShotSettings {
+export function parseSettingsDocument(
+  text: string,
+  defaults: ShotSettings,
+  platform: NodeJS.Platform = process.platform,
+): ShotSettings {
   try {
-    return normalizeSettings(JSON.parse(text), defaults);
+    return normalizeSettings(JSON.parse(text), defaults, platform);
   } catch {
     return { ...defaults };
   }
@@ -180,11 +205,13 @@ function normalizeShortcut(value: unknown, fallback: string): string {
 export class SettingsStore {
   readonly file: string;
   readonly defaults: ShotSettings;
+  private readonly platform: NodeJS.Platform;
   private value: ShotSettings;
   private document: Record<string, unknown>;
 
   constructor(options: LocalStateOptions) {
     const platform = options.platform ?? process.platform;
+    this.platform = platform;
     this.file = path.join(options.directory, SETTINGS_FILE_NAME);
     this.defaults = defaultSettings(options.picturesDirectory, platform);
     this.value = { ...this.defaults };
@@ -200,7 +227,7 @@ export class SettingsStore {
       const text = await readFile(this.file, "utf8");
       const record = parseSettingsRecord(text);
       this.document = record ?? { ...this.defaults };
-      this.value = normalizeSettings(record, this.defaults);
+      this.value = normalizeSettings(record, this.defaults, this.platform);
       if (process.platform !== "win32") {
         await chmod(this.file, 0o600).catch(() => undefined);
       }
@@ -216,7 +243,7 @@ export class SettingsStore {
   }
 
   async update(patch: Partial<ShotSettings>): Promise<ShotSettings> {
-    const next = normalizeSettings({ ...this.value, ...patch }, this.defaults);
+    const next = normalizeSettings({ ...this.value, ...patch }, this.defaults, this.platform);
     const document = { ...this.document, ...patchedDocumentKeys(patch, next) };
     // Persist first: a tray checkbox must never claim a state the file on disk
     // does not hold.
