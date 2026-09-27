@@ -40,8 +40,19 @@ jobs:
         if: runner.os == 'macOS'
         run: npm run verify:toast:mac
 
-      - name: Build desktop and MCP bundles
+      - name: Verify hold-to-capture state machine and protocol (C)
+        run: npm run test:native
+
+      - name: Build desktop, MCP and hold-helper bundles
         run: npm run build
+
+      - name: Verify hold-to-capture runtime (freeze, select, cancel)
+        if: runner.os != 'Linux'
+        run: npm run verify:hold:proof
+
+      - name: Synthetic macOS hold integration (skips without Accessibility)
+        if: runner.os == 'macOS'
+        run: npm run verify:hold:mac
 
       - name: Verify exact MCP discovery surface
         run: npm run verify:bundle

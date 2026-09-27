@@ -33,6 +33,11 @@ mac:
   target:
     - dmg
     - zip
+  # Hold-to-capture helper: a universal binary beside the app executable, so
+  # it lives outside the asar in a signed code location attributed to KE Pen.
+  extraFiles:
+    - from: dist/native/darwin/ke-pen-hold-helper
+      to: MacOS/ke-pen-hold-helper
 
 dmg:
   title: KE Pen ${version}
@@ -42,6 +47,9 @@ win:
   target:
     - nsis
     - zip
+  extraResources:
+    - from: dist/native/win32-x64/ke-pen-hold-helper.exe
+      to: hold/ke-pen-hold-helper.exe
 
 nsis:
   oneClick: false

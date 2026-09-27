@@ -1,15 +1,17 @@
 import {
   access,
   chmod,
+  constants,
   copyFile,
   cp,
   mkdtemp,
   readdir,
+  readFile,
   rm,
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -43,6 +45,8 @@ process.stdout.write(`Verified packaged KE Pen executable: ${executable}\n${outp
 const serverPath = packagedMcpServer(executable, platform);
 await access(serverPath);
 await verifyBridge(executable, serverPath, { ELECTRON_RUN_AS_NODE: "1" }, "installed app");
+
+if (platform === "darwin" || platform === "win32") await verifyHoldHelper(executable, platform);
 
 if (platform === "linux") {
   const appImage = await findAppImage();
@@ -115,6 +119,63 @@ async function verifyBridge(command, serverPath, env, label) {
   } finally {
     await client.close();
   }
+}
+
+// Hold to capture ships a small native helper next to the app. It must be
+// present, executable, built for every architecture the app runs on, signed,
+// report this exact version and protocol 1, and start disarmed and quit cleanly.
+async function verifyHoldHelper(packagedExecutable, targetPlatform) {
+  const helper =
+    targetPlatform === "darwin"
+      ? path.join(path.dirname(packagedExecutable), "ke-pen-hold-helper")
+      : path.join(path.dirname(packagedExecutable), "resources", "hold", "ke-pen-hold-helper.exe");
+  await access(helper, targetPlatform === "win32" ? constants.F_OK : constants.X_OK);
+  const expectedVersion = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")).version;
+
+  if (targetPlatform === "darwin") {
+    const archs = spawnSync("lipo", ["-archs", helper], { encoding: "utf8" }).stdout.trim().split(/\s+/).sort();
+    assert.deepEqual(archs, ["arm64", "x86_64"], `hold helper architectures: ${archs.join(" ")}`);
+    const signature = spawnSync("codesign", ["--verify", "--strict", "--verbose=2", helper], {
+      encoding: "utf8",
+    });
+    assert.equal(signature.status, 0, `hold helper signature: ${signature.stderr}`);
+  }
+
+  const versionRun = spawnSync(helper, ["--version"], { encoding: "utf8", timeout: 10_000, windowsHide: true });
+  assert.equal(versionRun.status, 0, `hold helper --version failed: ${versionRun.stderr}`);
+  const reported = JSON.parse(versionRun.stdout.trim());
+  assert.deepEqual(reported, { name: "ke-pen-hold-helper", version: expectedVersion, protocol: 1 });
+
+  const handshake = await new Promise((resolve, reject) => {
+    const child = spawn(helper, [], { stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
+    let output = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`The hold helper did not start and quit cleanly.\n${output}`));
+    }, 10_000);
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      output += chunk;
+      if (output.includes("\n") && !child.quitSent) {
+        child.quitSent = true;
+        child.stdin.end('{"cmd":"quit"}\n');
+      }
+    });
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      clearTimeout(timer);
+      resolve({ code, lines: output.split("\n").filter(Boolean).map((line) => JSON.parse(line)) });
+    });
+  });
+  assert.equal(handshake.code, 0, "the hold helper did not exit cleanly on quit");
+  assert.equal(handshake.lines[0]?.type, "ready");
+  assert.equal(handshake.lines[0]?.version, expectedVersion);
+  assert.equal(handshake.lines[0]?.protocol, 1);
+  process.stdout.write(
+    `Verified packaged hold helper: ${path.relative(root, helper)} (${handshake.lines
+      .map((line) => line.type)
+      .join(" → ")})\n`,
+  );
 }
 
 function packagedMcpServer(packagedExecutable, targetPlatform) {
