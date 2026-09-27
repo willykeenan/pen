@@ -61,10 +61,10 @@ what you capture.
 
 ## Good to know
 
-- The macOS app is signed with K&E Studios' own certificate, not an Apple
+- The public macOS build is ad-hoc signed, not signed with an Apple
   Developer ID, and is not notarized: the first time, right-click the app and
-  choose **Open**. Because the certificate stays the same, macOS keeps your
-  approvals when you update to a later version signed with it.
+  choose **Open**. macOS may ask you to approve screen recording or the
+  hold helper again after an update.
 - The helper only acts on the middle button, never reads the keyboard, and
   never saves, sends or logs where you click. It makes no network requests and
   stops when KE Pen stops.
