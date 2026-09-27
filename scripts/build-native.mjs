@@ -1,0 +1,140 @@
+// Builds ke-pen-hold-helper, the small native process behind "hold the middle
+// button to capture":
+//   macOS  → dist/native/darwin/ke-pen-hold-helper (universal arm64 + x86_64)
+//   Windows → dist/native/win32-x64/ke-pen-hold-helper.exe
+// Linux has no helper (Wayland forbids global interception and X11 already
+// uses the middle click for primary-selection paste).
+//
+//   node scripts/build-native.mjs            lenient: warn and skip without a compiler
+//   node scripts/build-native.mjs --require  fail when the helper cannot be built
+//   node scripts/build-native.mjs --sign "<identity>"
+//        also re-sign the macOS helper with a local code-signing identity
+//        (KE_PEN_HOLD_SIGN_IDENTITY works too). Public builds stay ad hoc.
+import { spawnSync } from "node:child_process";
+import { mkdir, readFile, rm } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const source = path.join(root, "native", "hold");
+const args = process.argv.slice(2);
+const required = args.includes("--require");
+const signIndex = args.indexOf("--sign");
+const signIdentity =
+  signIndex >= 0 ? args[signIndex + 1] : process.env.KE_PEN_HOLD_SIGN_IDENTITY || "";
+const version = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")).version;
+if (!/^[0-9A-Za-z.+-]{1,32}$/.test(version)) throw new Error(`Unexpected package version ${version}`);
+
+// Keep build machines' absolute paths out of the binary: no debug info, no
+// assert(), and every source path rewritten relative to the repository.
+const prefixMap = `-ffile-prefix-map=${root}${path.sep}=`;
+const common = ["-O2", "-std=gnu99", "-Wall", "-Wextra", "-Werror", prefixMap, `-DKE_PEN_VERSION="${version}"`];
+
+if (process.platform === "darwin") {
+  await buildMac();
+} else if (process.platform === "win32") {
+  await buildWindows();
+} else {
+  process.stdout.write(`Hold-to-capture is not supported on ${process.platform}; no helper built.\n`);
+}
+
+async function buildMac() {
+  const outputDirectory = path.join(root, "dist", "native", "darwin");
+  const output = path.join(outputDirectory, "ke-pen-hold-helper");
+  if (!probe("clang", ["--version"])) return missingCompiler("clang (Xcode Command Line Tools)");
+  await rm(outputDirectory, { recursive: true, force: true });
+  await mkdir(outputDirectory, { recursive: true });
+  run("clang", [
+    ...common,
+    "-arch",
+    "arm64",
+    "-arch",
+    "x86_64",
+    "-mmacosx-version-min=12.0",
+    "-o",
+    output,
+    path.join(source, "mac_main.c"),
+    path.join(source, "hold_core.c"),
+    path.join(source, "protocol.c"),
+    "-framework",
+    "ApplicationServices",
+    "-framework",
+    "CoreFoundation",
+  ]);
+  run("strip", ["-x", output]);
+  // Stripping invalidates the linker's ad-hoc signature, so sign again: ad hoc
+  // for public builds (matching the unsigned app), or the named local identity.
+  run("codesign", [
+    "--force",
+    "--sign",
+    signIdentity || "-",
+    "--identifier",
+    "dev.kestudios.pen.hold-helper",
+    "--options",
+    "runtime",
+    output,
+  ]);
+  const archs = spawnSync("lipo", ["-archs", output], { encoding: "utf8" }).stdout.trim();
+  process.stdout.write(`Built ${path.relative(root, output)} (${archs}; signed ${signIdentity || "ad hoc"})\n`);
+}
+
+async function buildWindows() {
+  const outputDirectory = path.join(root, "dist", "native", "win32-x64");
+  const output = path.join(outputDirectory, "ke-pen-hold-helper.exe");
+  const inputs = ["win_main.c", "hold_core.c", "protocol.c"].map((file) => path.join(source, file));
+  await rm(outputDirectory, { recursive: true, force: true });
+  await mkdir(outputDirectory, { recursive: true });
+  if (probe("clang", ["--version"])) {
+    run("clang", [
+      ...common.filter((flag) => flag !== "-std=gnu99"),
+      "-std=c11",
+      "-target",
+      "x86_64-pc-windows-msvc",
+      "-D_CRT_SECURE_NO_WARNINGS",
+      "-o",
+      output,
+      ...inputs,
+      "-luser32",
+      "-lkernel32",
+    ]);
+  } else if (probe("cl", [])) {
+    run("cl", [
+      "/nologo",
+      "/O2",
+      "/W3",
+      "/WX",
+      "/D_CRT_SECURE_NO_WARNINGS",
+      `/DKE_PEN_VERSION="${version}"`,
+      ...inputs,
+      `/Fe:${output}`,
+      `/Fo:${outputDirectory}${path.sep}`,
+      "user32.lib",
+      "kernel32.lib",
+    ]);
+  } else {
+    return missingCompiler("clang or cl");
+  }
+  process.stdout.write(`Built ${path.relative(root, output)}\n`);
+}
+
+function missingCompiler(name) {
+  const message = `No ${name} found; the hold-to-capture helper was not built.`;
+  if (required) {
+    process.stderr.write(`${message}\n`);
+    process.exit(1);
+  }
+  process.stdout.write(`${message} (Skipping: hold-to-capture will stay unavailable.)\n`);
+}
+
+function probe(command, probeArgs) {
+  const result = spawnSync(command, probeArgs, { encoding: "utf8" });
+  return !result.error && (command === "cl" || result.status === 0);
+}
+
+function run(command, commandArgs) {
+  const result = spawnSync(command, commandArgs, { encoding: "utf8", cwd: root });
+  if (result.error || result.status !== 0) {
+    process.stderr.write(`${result.stdout ?? ""}${result.stderr ?? ""}`);
+    throw new Error(`${command} failed while building the hold helper.`);
+  }
+}
