@@ -559,6 +559,9 @@ async function explainHoldPermission(): Promise<void> {
   holdPermissionDialogOpen = true;
   try {
     await shot.settings.update({ middleHoldPermissionExplained: true }).catch(() => undefined);
+    // KE Pen lives in the menu bar; without this the one-time explanation can
+    // open behind whatever the person is using and never be seen.
+    if (process.platform === "darwin") app.focus({ steal: true });
     const { response } = await dialog.showMessageBox({
       type: "info",
       title: "KE Pen",
