@@ -1,0 +1,39 @@
+{
+  "sourceCommit": "b0486387a5f744f50b5e44a15b69118bba77f29a",
+  "renderer": "desktop/renderer.ts bundled without edits",
+  "fixture": "docs/images/060/demo-fixture.html",
+  "nativeCapture": false,
+  "hostCallsStubbed": true,
+  "providerCalls": 0,
+  "shot": [
+    {
+      "type": "shot",
+      "payload": {
+        "displayId": 1,
+        "screenWidth": 1280,
+        "screenHeight": 800,
+        "rect": {
+          "x": 926,
+          "y": 153,
+          "width": 319,
+          "height": 190
+        }
+      }
+    }
+  ],
+  "pen": [
+    {
+      "type": "annotation",
+      "payloadKeys": [
+        "displayId",
+        "screenWidth",
+        "screenHeight",
+        "strokeBoundsPoints",
+        "cropRectPixels",
+        "normalizedStrokes",
+        "image"
+      ]
+    }
+  ],
+  "errors": []
+}

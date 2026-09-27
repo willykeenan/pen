@@ -1,64 +1,58 @@
 <p align="center">
-  <img src="assets/pen-icon.svg" width="128" height="128" alt="KE Pen app icon" />
+  <a href="https://github.com/willykeenan/pen/releases/tag/v0.6.0"><img src="docs/images/060/ke-pen-hero.png" alt="KE Pen — less explaining, more pointing. Real desktop overlay over a fictional workspace." width="100%" /></a>
 </p>
 
-# KE Pen
+<h1 align="center">Your screen. Your point. Understood.</h1>
 
-**Point at the bug. Your AI gets the point.**
+<p align="center">Draw around anything on your desktop. Give your AI the exact marked crop.<br />Free, open source, and built for MCP-capable assistants.</p>
 
-![KE Pen's overlay: a red mark drawn around the part of the screen the AI should look at, with the Pen badge](docs/images/pen-overlay.png)
+<p align="center">
+  <a href="https://github.com/willykeenan/pen/releases/tag/v0.6.0"><strong>Download 0.6.0</strong></a> ·
+  <a href="#first-minute-after-install">Quick start</a> ·
+  <a href="https://huggingface.co/spaces/willykeenan/ke-pen">Visual tour</a> ·
+  <a href="SYSTEM_CARD.md">System card</a>
+</p>
 
-<sub>Real Pen overlay rendered over a screenshot of another app; the mark was drawn with pointer events.</sub>
+---
 
-KE Pen is a completely free desktop drawing overlay for macOS, Windows, and
-Linux. Draw around anything on screen, keep working in your MCP-capable AI
-client, and let the AI inspect the exact marked crop. The red ink stays visible
-until the AI explicitly says it understood the mark.
+### Catch the moment before it disappears.
 
-The same app also ships **KE Shot**: one hotkey, drag a region, and the image is
-on your clipboard instantly—optionally uploaded to an endpoint you own, so you
-get a shareable link too. See [KE Shot](#ke-shot) below.
+**New in 0.6.0:** hold the middle mouse button still for half a second. KE Pen
+freezes your screen **with the open menu still in it**. Drag a region and it is
+copied to your clipboard. Hold to capture works on macOS and Windows.
 
-KE Pen 0.6.0 adds **hold to capture**: hold the middle mouse button for half a
-second and KE Pen freezes the screen—open menus included—then opens the KE Shot
-selector over the frozen image. Menus that close the moment you reach for a
-shortcut can finally be captured. A quick middle click still works; it lands
-when you let go.
-See [Hold the middle button](#hold-the-middle-button).
+| 01 · Freeze | 02 · Select | 03 · Point |
+|:---|:---|:---|
+| ![Frozen screen with its export menu preserved](docs/images/060/01-freeze.png) | ![A region selected in KE Shot's frozen overlay](docs/images/060/02-select.png) | ![The export menu circled with KE Pen](docs/images/060/03-point.png) |
+| Hold the middle button. Preserve the moment. | Drag a region. Copy it immediately. | Open Pen and circle what your AI should inspect. |
 
-KE Pen 0.5.1 makes the successful macOS link confirmation a KE Pen-owned,
-clickable top-right card. It no longer depends on Notification Center, which
-macOS can deliberately mute while a display is shared or recorded. The card
-does not take focus when it appears, and its sandboxed renderer never receives
-the private viewer URL; only the main process opens the validated link.
+<sub>Actual 0.6.0 renderer, driven with pointer input over a fictional test page. These are separate capture and annotation workflows; capture does not automatically enter Pen. No AI response is simulated. [Capture provenance](docs/images/060/README.md).</sub>
 
-KE Pen 0.5.0 adds two agent-only layers. **Agent Displays** let
-every exact agent/task claim a separate app-hosted test canvas with its own
-visible software cursor. Those cursors operate concurrently inside separate
-offscreen browser profiles; they never move or replace the computer's single
-native cursor. William can open the Agent Displays switcher, enter one canvas,
-take exclusive control, return it to its agent, or Stop and revoke it.
-**Agent visual references** let one agent privately point one chosen agent at
-one explicit PNG or inked Pen region plus a short direction. They run entirely
-in the background and add no human button, popup, clipboard action, capture,
-public upload, or history browser.
+### “That thing, right there.”
 
-Created by **William Keenan at [K&E Studios](https://kestudios.dev/?ref=pen)**.
-Free and open source under the MIT license—no paid tier or feature gate.
+![KE Pen's real red ink being drawn around an open menu](docs/images/060/point-demo.gif)
 
-[Download KE Pen](https://kestudios.dev/pen?ref=github-pen) ·
-[GitHub releases](https://github.com/willykeenan/pen/releases) ·
-[Applied-system card](./SYSTEM_CARD.md)
+No describing coordinates. No guessing which button. Your MCP-capable AI calls
+`pen_read` to inspect the marked crop; the ink stays until it explicitly calls
+`pen_complete`. Reading a mark never silently clears it.
+
+- **Pen:** draw over any app, then ask your AI to “look at the pen.”
+- **Shot:** capture a region straight to the clipboard. Optional sharing uses an endpoint you own.
+- **Local by default:** no account, telemetry, or built-in cloud backend. Your configured AI host controls where its MCP results go.
+- **One free app:** macOS, Windows, and Linux. No paid tier or feature gate.
+
+Created by **William Keenan at [K&E Studios](https://kestudios.dev/?ref=pen)** · MIT licensed.
 
 ## Downloads
 
 | Platform | Free build | Current boundary |
 |---|---|---|
-| macOS | Universal DMG or ZIP | macOS 13+, Intel and Apple Silicon |
-| Windows | x64 installer or ZIP | Windows 10/11, 64-bit |
-| Linux | x64 AppImage, DEB, or tar.gz | X11 or XWayland desktop session |
+| macOS | [Universal DMG / ZIP](https://github.com/willykeenan/pen/releases/tag/v0.6.0) | macOS 13+, Intel and Apple Silicon |
+| Windows | [x64 installer / ZIP](https://github.com/willykeenan/pen/releases/tag/v0.6.0) | Windows 10/11, 64-bit |
+| Linux | [x64 AppImage / DEB / tar.gz](https://github.com/willykeenan/pen/releases/tag/v0.6.0) | X11 or XWayland desktop session |
 
-The public builds are not commercially code-signed or notarized. macOS may
+Public CI macOS builds are ad-hoc signed and not notarized; the hold helper may
+need Accessibility approval again after an update. Windows builds are unsigned. macOS may
 require right-click → **Open**, Windows may show SmartScreen, and Linux may
 require `chmod +x` for the AppImage. The source, checksums, and native build
 workflows are public so anyone can inspect or reproduce the artifacts.
