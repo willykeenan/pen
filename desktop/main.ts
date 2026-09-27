@@ -50,6 +50,7 @@ import {
   shouldOfferHoldSetup,
 } from "./hold-core.js";
 import { HoldHelperSupervisor, type HoldHelperStatus } from "./hold-helper.js";
+import { holdSetupBounds, holdSetupDocument, holdSetupRoute } from "./hold-setup-core.js";
 import {
   SettingsStore,
   ShotHistoryStore,
@@ -163,7 +164,7 @@ let overlayFrozen = false;
 let holdHelper: HoldHelperSupervisor | null = null;
 let holdStatus: HoldHelperStatus | null = null;
 let holdInFlight = false;
-let holdPermissionDialogOpen = false;
+let holdSetupCard: BrowserWindow | null = null;
 let holdSetupTimer: NodeJS.Timeout | null = null;
 let holdAwaitingPermission = false;
 let holdProof: HoldProofState | null = null;
@@ -217,6 +218,7 @@ if (IS_SMOKE_TEST) {
     finishShotOverlay(null);
     closeOverlays();
     stopHoldSetupWait();
+    closeHoldSetupCard();
     void holdHelper?.stop();
     void agentDisplayBroker?.stop();
     void agentDisplays?.shutdown();
@@ -491,6 +493,7 @@ function startHoldCapture(): void {
       }
       if (status.state === "active") {
         stopHoldSetupWait();
+        closeHoldSetupCard();
         if (holdAwaitingPermission && previous !== "active") announceHoldReady();
         holdAwaitingPermission = false;
         void maybeAnnounceHoldCapture();
@@ -605,7 +608,7 @@ function offerHoldSetupWhenIdle(): void {
     const busy = phase !== "idle" || activating || holdInFlight || (shot?.busy() ?? false);
     if (busy || powerMonitor.getSystemIdleTime() < HOLD_SETUP_IDLE_SECONDS) return;
     stopHoldSetupWait();
-    void explainHoldPermission();
+    explainHoldPermission({ focus: false });
   }, 1_000);
 }
 
@@ -641,56 +644,119 @@ function announceHoldReady(): void {
 // One plain explanation, then one system surface: macOS's own Accessibility
 // alert the first time for this version, the settings pane after that. The
 // helper notices the approval on its own; nothing needs a relaunch.
-async function explainHoldPermission(): Promise<void> {
-  if (holdPermissionDialogOpen || !shot) return;
+//
+// The explanation is a small KE Pen card, not a modal dialog: a modal message
+// box would stop KE Pen's main loop (hotkeys, the helper, quitting, logging
+// out) for as long as it stayed open, and this card can appear while the
+// person is away. Shown automatically it never takes focus; from the tray it
+// does.
+function explainHoldPermission(options: { focus: boolean } = { focus: true }): void {
+  if (!shot || process.platform !== "darwin") return;
   const runtime = shot;
-  holdPermissionDialogOpen = true;
-  try {
-    const version = app.getVersion();
-    const step = holdSetupStep(runtime.settings.current.middleHoldPrompted, version);
-    await runtime.settings.update({ middleHoldIntroduced: version }).catch(() => undefined);
-    const delay = formatHoldDelay(runtime.settings.current.middleHoldDelayMs);
-    // KE Pen lives in the menu bar; without this the explanation can open
-    // behind whatever the person is using. It only ever runs after they
-    // chose "Set up" or have been idle for a few seconds.
-    if (process.platform === "darwin") app.focus({ steal: true });
-    const { response } = await dialog.showMessageBox({
-      type: "info",
-      title: "KE Pen",
-      message: "Hold the middle mouse button to capture",
-      detail:
-        `Hold the middle mouse button for ${delay} and KE Pen freezes the screen, open menus ` +
-        "included, so you can drag out a capture. A quick middle click still works; it just " +
-        "lands when you let go.\n\n" +
-        "So a menu stays open while you hold, a small KE Pen helper has to catch the middle " +
-        "button before other apps see it. macOS calls this Accessibility: choose Continue, then " +
-        "allow \u201cke-pen-hold-helper\u201d in System Settings \u203a Privacy & Security \u203a " +
-        "Accessibility. The helper only watches the middle button, never the keyboard or other " +
-        "buttons, and never saves, sends or logs where you click." +
-        (step === "open-settings"
-          ? "\n\nIf ke-pen-hold-helper is already listed and switched on, that entry belongs to " +
-            "an older version: select it, remove it with \u2212, then choose Set up again from " +
-            "the KE Pen menu."
-          : ""),
-      buttons: ["Continue", "Not now", "Turn off hold to capture"],
-      defaultId: 0,
-      cancelId: 1,
-    });
-    if (response === 0) {
-      if (step === "prompt" && holdHelper?.requestPermissionPrompt()) {
-        await runtime.settings.update({ middleHoldPrompted: version }).catch(() => undefined);
-      } else {
-        await shell.openExternal(
-          "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-        );
-      }
-    } else if (response === 2) {
-      applyShotSetting({ middleHoldCapture: false });
+  const version = app.getVersion();
+  if (holdSetupCard && !holdSetupCard.isDestroyed()) {
+    if (options.focus) {
+      app.focus({ steal: true });
+      holdSetupCard.show();
+      holdSetupCard.focus();
     }
-  } finally {
-    holdPermissionDialogOpen = false;
-    updateTrayMenu();
+    return;
   }
+  void runtime.settings.update({ middleHoldIntroduced: version }).catch(() => undefined);
+  const step = holdSetupStep(runtime.settings.current.middleHoldPrompted, version);
+  let bounds;
+  try {
+    const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+    bounds = holdSetupBounds(display.workArea);
+  } catch {
+    return;
+  }
+  const card = new BrowserWindow({
+    ...bounds,
+    title: "Hold to capture",
+    show: false,
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    acceptFirstMouse: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: true,
+    roundedCorners: true,
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true,
+      javascript: false,
+    },
+  });
+  holdSetupCard = card;
+  card.setMenu(null);
+  card.setAlwaysOnTop(true, "floating");
+  const documentUrl = `data:text/html;charset=utf-8,${encodeURIComponent(
+    holdSetupDocument({
+      delay: formatHoldDelay(runtime.settings.current.middleHoldDelayMs),
+      staleEntryHint: step === "open-settings",
+    }),
+  )}`;
+  const route = (destination: string): void => {
+    const action = holdSetupRoute(destination);
+    if (!action) return;
+    closeHoldSetupCard();
+    if (action === "continue") void continueHoldSetup();
+    else if (action === "off") applyShotSetting({ middleHoldCapture: false });
+  };
+  card.webContents.on("will-navigate", (event, destination) => {
+    if (destination === documentUrl) return;
+    event.preventDefault();
+    route(destination);
+  });
+  card.webContents.setWindowOpenHandler(({ url: destination }) => {
+    route(destination);
+    return { action: "deny" };
+  });
+  card.webContents.on("will-attach-webview", (event) => event.preventDefault());
+  card.once("closed", () => {
+    if (holdSetupCard === card) holdSetupCard = null;
+    updateTrayMenu();
+  });
+  void card
+    .loadURL(documentUrl)
+    .then(() => {
+      if (card.isDestroyed()) return;
+      if (options.focus) {
+        app.focus({ steal: true });
+        card.show();
+        card.focus();
+      } else {
+        card.showInactive();
+      }
+    })
+    .catch(() => closeHoldSetupCard());
+}
+
+async function continueHoldSetup(): Promise<void> {
+  const runtime = shot;
+  if (!runtime) return;
+  const version = app.getVersion();
+  if (holdSetupStep(runtime.settings.current.middleHoldPrompted, version) === "prompt" &&
+      holdHelper?.requestPermissionPrompt()) {
+    await runtime.settings.update({ middleHoldPrompted: version }).catch(() => undefined);
+    return;
+  }
+  await shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
+}
+
+function closeHoldSetupCard(): void {
+  const card = holdSetupCard;
+  holdSetupCard = null;
+  if (card && !card.isDestroyed()) card.destroy();
 }
 
 // ---- Hold runtime proof (--hold-proof=<dir>) ----------------------------------
@@ -1817,7 +1883,7 @@ function holdMenuItems(settings: ShotSettings): MenuItemConstructorOptions[] {
   if (state === "needs-permission") {
     items.push({
       label: "Hold to capture: allow in System Settings…",
-      click: () => void explainHoldPermission(),
+      click: () => explainHoldPermission({ focus: true }),
     });
   } else if (state === "failed") {
     items.push({

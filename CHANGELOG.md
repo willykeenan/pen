@@ -31,8 +31,9 @@ All notable changes to KE Pen. Earlier releases are described in
   accepts five fixed stdio commands, and stops with KE Pen.
 - macOS: the Accessibility approval belongs to the helper, not to KE Pen, and
   System Settings lists it as `ke-pen-hold-helper`. Nothing pops up at launch;
-  a one-time explanation waits until you are idle, then macOS's own prompt, and
-  KE Pen says when hold to capture is ready. A withdrawn approval is noticed
+  a one-time explanation card waits until you are idle (it takes no focus and,
+  unlike a modal dialog, never blocks hotkeys or quitting), then macOS's own
+  prompt, and KE Pen says when hold to capture is ready. A withdrawn approval is noticed
   within seconds.
 - The helper recovers on its own when macOS disables a stalled event tap or
   Windows drops a stalled hook: a press still held stays a hold, anything

@@ -136,7 +136,8 @@ immediately, local copy, optional upload.
   needs **Accessibility**, and on macOS that approval belongs to the small
   helper, not to KE Pen: System Settings lists it as **ke-pen-hold-helper**.
   Nothing pops up the moment KE Pen starts. Once you have been idle for a few
-  seconds, KE Pen explains the approval once; **Continue** shows macOS's own
+  seconds, a small KE Pen card in the top-right corner explains the approval
+  once (it takes no focus and blocks nothing); **Continue** shows macOS's own
   Accessibility prompt for the helper, and you switch it on in System Settings
   › Privacy & Security › Accessibility. KE Pen notices within two seconds, with
   no restart, and says **Hold to capture is ready**. The tray item

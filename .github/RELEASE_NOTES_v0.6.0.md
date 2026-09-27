@@ -29,9 +29,9 @@ out a capture from the frozen picture.
 Holding the middle button back from other apps needs Accessibility. That
 approval goes to a small helper, which System Settings lists as
 **ke-pen-hold-helper**, not to KE Pen itself. After you install, once you have
-stopped typing for a few seconds, KE Pen explains this once; choose
-**Continue**, then **Open System Settings** in the macOS prompt, and switch
-**ke-pen-hold-helper** on. KE Pen says **Hold to capture is ready** a moment
+stopped typing for a few seconds, a small KE Pen card in the top-right corner
+explains this once; choose **Continue**, then **Open System Settings** in the
+macOS prompt, and switch **ke-pen-hold-helper** on. KE Pen says **Hold to capture is ready** a moment
 later. No restart needed.
 
 Windows needs no permission. Linux is not supported.

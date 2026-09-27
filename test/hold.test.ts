@@ -46,6 +46,15 @@ import {
   type HoldArmInput,
 } from "../desktop/hold-core.js";
 import {
+  HOLD_SETUP_CONTINUE_URL,
+  HOLD_SETUP_LATER_URL,
+  HOLD_SETUP_OFF_URL,
+  holdSetupBounds,
+  holdSetupDocument,
+  holdSetupParagraphs,
+  holdSetupRoute,
+} from "../desktop/hold-setup-core.js";
+import {
   HoldHelperSupervisor,
   type HoldHelperStatus,
   type HoldTimers,
@@ -512,6 +521,43 @@ test("mixed-DPI frames are brought to each display's own pixels, so crops are na
     imageHeight: native.height,
   });
   assert.deepEqual({ width: crop.width, height: crop.height }, { width: 200, height: 100 });
+});
+
+test("the macOS setup card is a scriptless page with three fixed routes, not a modal dialog", () => {
+  assert.equal(holdSetupRoute(HOLD_SETUP_CONTINUE_URL), "continue");
+  assert.equal(holdSetupRoute(HOLD_SETUP_LATER_URL), "later");
+  assert.equal(holdSetupRoute(HOLD_SETUP_OFF_URL), "off");
+  assert.equal(holdSetupRoute("https://example.com/"), null);
+  assert.equal(holdSetupRoute("ke-pen-hold://continue/extra"), null);
+
+  const copy = holdSetupParagraphs({ delay: "0.75 s", staleEntryHint: false });
+  assert.match(copy[0]!, /for 0\.75 s and KE Pen freezes the screen/);
+  assert.match(copy[0]!, /A quick middle click still works; it just lands when you let go\./);
+  assert.match(copy[1]!, /\u201cke-pen-hold-helper\u201d/);
+  assert.match(copy[1]!, /never saves, sends or logs where you click/);
+  assert.equal(copy.length, 2);
+  assert.equal(holdSetupParagraphs({ delay: "0.5 s", staleEntryHint: true }).length, 3);
+
+  const html = holdSetupDocument({ delay: "<b>0.5 s</b>", staleEntryHint: false });
+  assert.match(html, /default-src 'none'/);
+  assert.doesNotMatch(html, /<script/i);
+  assert.doesNotMatch(html, /<b>0\.5 s<\/b>/, "text is escaped");
+  for (const url of [HOLD_SETUP_CONTINUE_URL, HOLD_SETUP_LATER_URL, HOLD_SETUP_OFF_URL]) {
+    assert.ok(html.includes(`href="${url}"`));
+  }
+  assert.deepEqual(holdSetupBounds({ x: 0, y: 25, width: 1440, height: 875 }), {
+    x: 962,
+    y: 43,
+    width: 460,
+    height: 318,
+  });
+  assert.throws(() => holdSetupBounds({ x: 0, y: 0, width: 0, height: 900 }));
+
+  // The explanation never blocks KE Pen's main loop with a modal message box.
+  const main = readFileSync(new URL("../desktop/main.ts", import.meta.url), "utf8");
+  const explain = main.slice(main.indexOf("function explainHoldPermission("), main.indexOf("async function continueHoldSetup("));
+  assert.doesNotMatch(explain, /showMessageBox/);
+  assert.match(explain, /showInactive\(\)/);
 });
 
 // ---- Overlay pointer rules --------------------------------------------------------------
