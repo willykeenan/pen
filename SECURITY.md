@@ -2,7 +2,8 @@
 
 KE Pen intentionally has a narrow boundary:
 
-- the desktop app requests only the operating system's screen-capture access;
+- the desktop app requests the operating system's screen-capture access and, on
+  macOS, Accessibility for the optional hold-to-capture helper;
 - the renderer is sandboxed, context-isolated, and loads packaged local content;
 - the macOS KE Shot link card is sandboxed and never receives the private URL;
   its fixed local route asks the main process to open the validated URL;
@@ -79,10 +80,36 @@ denied. Snapshots are capped at 16 MB.
 The macOS permission display reports the real current TCC state but does not
 request it. Isolated displays need neither Screen Recording nor Accessibility.
 Normal KE Pen screen marking still needs Screen Recording because it captures
-the visible display. Real-desktop input is not implemented.
+the visible display. Agents still have no real-desktop input: the only native
+input KE Pen ever posts is the person's own held-back middle click, given back
+unchanged (see the hold-to-capture boundary below).
 
 The complete abuse analysis and residual risks are recorded in
 [`docs/AGENT_DISPLAYS_THREAT_MODEL.md`](./docs/AGENT_DISPLAYS_THREAT_MODEL.md).
+
+## Hold-to-capture boundary
+
+`ke-pen-hold-helper` is the only native component that touches real input, and
+it is deliberately narrow:
+
+- it observes only the middle mouse button (macOS: an active session event tap
+  that returns every other button untouched first; Windows: a low-level mouse
+  hook that looks at moves only while a middle press is pending);
+- it starts **disarmed** and is armed only by KE Pen's main process, and only
+  while KE Pen is idle and could open the selector;
+- its stdin accepts exactly four commands—`config`, `arm`, `disarm`,
+  `quit`—none of which can carry a position, a button, or an event, so no
+  process can use it to post input of its choosing; the only events it posts
+  are copies of the person's own swallowed middle-button events;
+- its own replays are tagged and passed through, so they cannot loop;
+- it exits when stdin closes, when KE Pen exits, on `quit`, and on SIGTERM, and
+  gives back any click it is still holding when it stops;
+- on macOS the Accessibility approval is attributed to KE Pen (the helper's
+  responsible process), and the helper ships inside the app bundle next to the
+  app executable, signed with the same identity as the app.
+
+The full analysis and residual risks are in
+[`docs/MIDDLE_HOLD_CAPTURE_THREAT_MODEL.md`](./docs/MIDDLE_HOLD_CAPTURE_THREAT_MODEL.md).
 
 The AI host and model provider are separate trust boundaries. Review their
 tool-call UI, network behavior, and privacy policy before sharing sensitive

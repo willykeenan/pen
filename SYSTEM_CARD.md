@@ -10,6 +10,12 @@ Version 0.4.0 adds **KE Shot**, a capture-and-share mode in the same app: one
 hotkey, one dragged region, the image on the clipboard before any disk or
 network work, and optionally a link from an endpoint the user owns.
 
+KE Pen 0.6.0 adds **hold to capture**: holding the middle mouse button (500 ms
+by default) freezes every display first and then opens the KE Shot selector
+over the frozen image, so menus and hover states that close on the way to a
+shortcut can be captured. A small native helper holds back only the middle
+button and gives quick clicks back unchanged.
+
 KE Pen 0.5.1 moves the successful macOS link confirmation out of Notification
 Center and into a KE Pen-owned top-right card. The card appears without taking
 focus, stays clickable while visible, and keeps the private viewer URL in the
@@ -44,6 +50,9 @@ send, deploy, purchase, or take another consequential action.
 - KE Shot: the native macOS region picker on darwin, an equivalent overlay
   marquee on Windows and Linux, a clipboard-first delivery path, local PNG
   copies, and a bounded 25-entry link history.
+- `ke-pen-hold-helper` (macOS and Windows): a supervised native process that
+  holds back only the middle mouse button for hold-to-capture, speaks a
+  four-command stdio protocol, and starts disarmed.
 - No cloud backend, account, telemetry, ads, remote code, or TCP/network listener.
 - A same-user local IPC broker for Agent Displays; it opens no TCP/network port.
 
@@ -68,6 +77,16 @@ capabilities, one-controller handoff, Stop/revoke, crash interruption, stale
 expiry, typed-text/URL redaction, loopback and subresource confinement,
 concurrent session independence, local IPC authentication, bounded input, and
 a real 960 × 680 switcher render with keyboard-focus and accessibility facts.
+
+Hold-to-capture checks add a C state-machine suite with a 100,000-step property
+test (every held press resolves exactly once, no unbalanced up), a strict
+protocol whitelist, supervisor restart/back-off/version checks against a fake
+helper, multi-display capture matching and crop mapping, a real Electron
+runtime proof that every display is frozen before any selector window is
+created, painted, shown, or focused and that the crop reaches the clipboard at
+the exact size, and a synthetic macOS integration test through the real helper
+(click replay after release, hold at threshold with nothing leaking, drag
+pass-through, disarm replay, an open menu surviving a hold, crash recovery).
 
 Agent-reference checks add exact sender/recipient isolation, capability denial,
 owner-only file modes, checksum and PNG bounds, source-annotation lifecycle
@@ -101,6 +120,12 @@ log line. Responses are validated before use: the share and image links must
 parse as `https` URLs before the app will open or copy them.
 Uploading is publishing, and deletion at the endpoint cannot recall bytes a chat
 app or CDN already fetched.
+
+Hold to capture is bounded to the middle mouse button. Its helper is armed only
+by KE Pen while KE Pen is idle, cannot be told to post arbitrary input (its only
+posts are the person's own held-back click), makes no network request, never
+records positions, and stops with KE Pen. On macOS it needs Accessibility for
+KE Pen; Windows needs no permission; Linux is unsupported.
 
 Agent Displays are separately bounded to packaged fixtures and loopback. Each
 renderer has a memory-only partition; public/cross-origin requests, permissions,
@@ -137,10 +162,13 @@ touch human UI, capture a desktop, use the clipboard, or upload.
   paste an endpoint and token into a local settings file; changing the KE Shot
   hotkey requires restarting the app. Deleting a shot depends on the user's own
   endpoint implementing `DELETE /<id>`.
+- Hold to capture is macOS and Windows only. Unsigned public macOS builds lose
+  the Accessibility approval when the app changes; a quick middle click over an
+  elevated Windows window cannot be given back.
 - Public builds are unsigned and not Apple-notarized or Windows-signed.
 - No claim of model training, autonomous authority, broad adoption, or
   universal host compatibility is made.
 
-Created by William Keenan at K&E Studios. Version 0.5.1 is completely free and
+Created by William Keenan at K&E Studios. Version 0.6.0 is completely free and
 open source under the MIT license, with no paid tier or feature gate. See
 [kestudios.dev/pen](https://kestudios.dev/pen?ref=github-pen).

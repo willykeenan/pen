@@ -19,6 +19,12 @@ The same app also ships **KE Shot**: one hotkey, drag a region, and the image is
 on your clipboard instantly—optionally uploaded to an endpoint you own, so you
 get a shareable link too. See [KE Shot](#ke-shot) below.
 
+KE Pen 0.6.0 adds **hold to capture**: hold the middle mouse button for half a
+second and KE Pen freezes the screen—open menus included—then opens the KE Shot
+selector over the frozen image. Menus that close the moment you reach for a
+shortcut can finally be captured. A quick middle click still works as usual.
+See [Hold the middle button](#hold-the-middle-button).
+
 KE Pen 0.5.1 makes the successful macOS link confirmation a KE Pen-owned,
 clickable top-right card. It no longer depends on Notification Center, which
 macOS can deliberately mute while a display is shared or recorded. The card
@@ -101,6 +107,44 @@ Everything after the clipboard is optional and off by default:
 **KE Shot never uploads anything until you give it an endpoint and a token.**
 With either field empty it copies, saves locally, and stops there.
 
+### Hold the middle button
+
+Hold the middle mouse button still for half a second. At that instant KE Pen
+captures every display—before it shows a window, moves focus, or activates
+itself—so the menu, tooltip, or hover state you were looking at is still in the
+picture. The selector then opens over that frozen image (its badge reads
+**FROZEN**). Drag a region and the crop goes through the normal KE Shot flow:
+clipboard immediately, local copy, optional upload. **Esc** cancels.
+
+- **Quick clicks still work.** A middle press is held back until you release;
+  released before the delay, the same click is given back at the same spot, so
+  opening links in new tabs, closing tabs, and pasting keep working. The click
+  lands on release instead of on press.
+- **Middle-drags still work.** Moving more than a few pixels while holding hands
+  the press straight back, so Blender orbit, CAD pan, and browser autoscroll are
+  unaffected. A deliberate *still* press longer than the delay before dragging
+  does become a capture; raise the delay or switch the feature off if that gets
+  in your way.
+- **Settings.** Tray › **Hold middle button to capture** turns it on or off (on
+  by default on macOS and Windows); **Hold delay** picks 200 ms to 1.5 s
+  (500 ms by default).
+- **Permission.** On macOS, holding the button back from the app under the
+  pointer needs **Accessibility** for KE Pen. KE Pen explains this once and
+  opens the exact System Settings pane; it notices the approval without a
+  restart. If KE Pen already shows as allowed but hold-to-capture still asks,
+  that switch belongs to an older build—turn it off and back on. Windows needs
+  no permission. Linux is not supported: Wayland forbids global interception
+  and X11 already uses the middle click for paste.
+- **Scope.** A small helper process, `ke-pen-hold-helper`, watches only the
+  middle button—never the keyboard or other buttons—and never stores or logs
+  where you click. It is armed only while KE Pen could actually open the
+  selector, and stops with KE Pen. See [PRIVACY.md](./PRIVACY.md),
+  [SECURITY.md](./SECURITY.md), and the
+  [threat model](./docs/MIDDLE_HOLD_CAPTURE_THREAT_MODEL.md).
+- **Windows note.** Windows blocks input sent into windows running as
+  administrator, so a quick middle click over such a window cannot be given
+  back.
+
 ### Point it at your own endpoint
 
 KE Shot has no built-in account and no hosted service you sign into. It talks
@@ -121,7 +165,10 @@ Open it from the tray with **Open settings file…**. The exact keys:
   "saveLocalCopy": true,
   "localCopyDir": "/Users/you/Pictures/KE Shot",
   "shotShortcut": "Command+Shift+2",
-  "showInDock": true
+  "showInDock": true,
+  "middleHoldCapture": true,
+  "middleHoldDelayMs": 500,
+  "middleHoldPermissionExplained": false
 }
 ```
 
@@ -138,6 +185,9 @@ and token to turn uploading on.
 | `localCopyDir` | Where those PNGs go. |
 | `shotShortcut` | Electron accelerator string. Restart the app to re-register it. |
 | `showInDock` | macOS only. |
+| `middleHoldCapture` | Hold the middle button to freeze and capture. macOS and Windows only; always off on Linux. |
+| `middleHoldDelayMs` | How long the middle button must be held, 200–1500 ms (values outside are clamped). |
+| `middleHoldPermissionExplained` | Set once KE Pen has explained the macOS Accessibility approval. |
 
 A malformed file is ignored in favour of the defaults rather than crashing the
 app, and unknown or wrong-typed keys fall back per field.
@@ -194,7 +244,8 @@ Download the build for your operating system from
 - Windows: run the x64 installer, or unzip the portable build.
 - Linux: install the DEB, or make the AppImage executable and run it.
 
-macOS asks for Screen Recording permission. Linux uses the desktop capture
+macOS asks for Screen Recording permission, and for Accessibility the first
+time hold-to-capture needs it (Windows needs neither). Linux uses the desktop capture
 portal when required. KE Pen defaults to XWayland inside a Wayland session
 because native Wayland prevents reliable global overlay positioning; advanced
 users can set `KE_PEN_NATIVE_WAYLAND=1`, with compositor-dependent behavior.
@@ -274,7 +325,7 @@ source-based installation instead, install the public GitHub package after
 Node.js 20 or newer:
 
 ```bash
-npm install --global github:willykeenan/pen#v0.5.1
+npm install --global github:willykeenan/pen#v0.6.0
 ```
 
 Then configure your AI host:
@@ -326,7 +377,8 @@ uploading a capture at the moment you take a shot, and the delete you ask for
 from **Recent shots**. No endpoint or no token means no request is ever made.
 Agent Displays may load only a loopback test server on the same computer and
 block public and cross-origin requests. Nothing else in the app phones
-anywhere.
+anywhere. Hold to capture makes no network request of its own; its helper talks
+only to KE Pen over a private pipe.
 
 It stores the marked crop and lifecycle record locally:
 
@@ -359,14 +411,27 @@ agent-message channel.
 
 ## Build and verify from source
 
-Requirements: Node.js 20+ and the native packaging tools for your target OS.
+Requirements: Node.js 20+, the native packaging tools for your target OS, and a
+C compiler for the hold-to-capture helper (Xcode Command Line Tools on macOS,
+clang or MSVC on Windows; Linux builds no helper).
 
 ```bash
 npm ci
 npm run check
+npm run test:native        # hold-to-capture state machine and protocol (C)
 npm run build
 npm run start:desktop
 ```
+
+Hold-to-capture has two more gates. `npm run verify:hold:proof` runs the real
+desktop build in an isolated proof mode (temporary data, a fake helper, an
+in-memory clipboard, no network) and checks that every display is frozen
+before any selector window is created, painted, shown, or focused.
+`npm run verify:hold:mac` posts synthetic middle-button events through the real
+helper into a small test panel and checks click replay, hold timing, drag
+pass-through, a menu staying open through a hold, and crash recovery; it waits
+for ten idle seconds, stops if you touch the mouse, and needs Accessibility for
+the terminal running it.
 
 Create a native installer on its matching operating system:
 
